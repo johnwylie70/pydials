@@ -29,6 +29,8 @@
  * it can do, and all of it is optional.
  *
  *   set(name, value), get(name)     else the control reads and writes target[name]
+ *   onChange(fn)                    fn(name) is called when what describe(name) says has changed (a list of devices
+ *                                   that grew): the control asks again. It may give back a function that stops it
  *   describe(name)                  { min, max, default, unit, step, kind, choices, name }: the control
  *                                   takes its range, unit and starting value from it. kind is "float",
  *                                   "int", "bool" or "choice"; choices is a list, or names joined by |
@@ -204,20 +206,35 @@ class Ranged extends Control {
       d = describe(spec.target, spec.param)
       if (!this.label) this.label = d.label ?? d.name ?? String(spec.param)
     }
-    this.min = spec.min ?? d.min ?? 0
-    this.max = spec.max ?? d.max ?? 1
-    this.step = spec.step ?? d.step ?? (d.kind === 'int' ? 1 : 0)
-    this.unit = unitOf(spec.unit ?? d.unit ?? '')
-    this.digits = spec.digits ?? d.digits
+    this.spec = spec
     this.format = spec.format || null
-    // A pitch is turned by ratio, not by amount: half the dial is 20 to 200 Hz, not 20 to 10,000.
-    this.log = this.min > 0 && this.max > this.min &&
-      (spec.log ?? d.log ?? (d.curve === 'log' || (this.unit === 'Hz' && this.max / this.min >= 100)))
+    this.range(d)
     const now = spec.value ?? (this.target ? readTarget(this.target, this.param) : undefined)
     this.default = spec.default ?? d.default ?? (typeof now === 'number' ? now : this.min)
     this.v = this.clean(typeof now === 'number' ? now : this.default)
     this.pos = this.toPos(this.v)
     if (spec.value != null && this.target) writeTarget(this.target, this.param, this.v)
+  }
+  /** Its range, step and unit: what the scene gave, else what the target says of the setting. */
+  range(d) {
+    const spec = this.spec
+    this.min = spec.min ?? d.min ?? 0
+    this.max = spec.max ?? d.max ?? 1
+    this.step = spec.step ?? d.step ?? (d.kind === 'int' ? 1 : 0)
+    this.unit = unitOf(spec.unit ?? d.unit ?? '')
+    this.digits = spec.digits ?? d.digits
+    // A pitch is turned by ratio, not by amount: half the dial is 20 to 200 Hz, not 20 to 10,000.
+    this.log = this.min > 0 && this.max > this.min &&
+      (spec.log ?? d.log ?? (d.curve === 'log' || (this.unit === 'Hz' && this.max / this.min >= 100)))
+  }
+  /** The target says the setting is not what it was (another range, another unit): it is asked again. */
+  refresh() {
+    const d = describe(this.target, this.param)
+    this.range(d)
+    this.default = this.spec.default ?? d.default ?? this.default
+    const now = readTarget(this.target, this.param)
+    this.v = this.clean(typeof now === 'number' ? now : this.v)
+    this.pos = this.toPos(this.v)
   }
   clean(value) {
     value = clamp(Number(value) || 0, Math.min(this.min, this.max), Math.max(this.min, this.max))
@@ -499,6 +516,21 @@ class Select extends Control {
     this.choices = [...(spec.choices || d.choices || [])]
     this.i = Math.max(0, this.out && typeof now === 'number' ? clamp(Math.round(now), 0, this.choices.length - 1) : this.choices.indexOf(now))
     this.default = this.i
+  }
+  /**
+   * The target says its choices are not what they were (a device was plugged in, or taken out): they are
+   * asked for again. The choice it is on is kept if it is still one of them; if not, it is whatever the
+   * target says it is on now.
+   */
+  refresh() {
+    const d = describe(this.target, this.param), was = this.value
+    if (d.choices) this.choices = [...d.choices]
+    let i = this.choices.indexOf(was)
+    if (i < 0) {
+      const there = readTarget(this.target, this.param)
+      i = this.out && typeof there === 'number' ? clamp(Math.round(there), 0, this.choices.length - 1) : this.choices.indexOf(there)
+    }
+    this.i = Math.max(0, i)
   }
   get value() { return this.choices[this.i] }
   set value(choice) { this.index = this.choices.indexOf(choice) }
@@ -1238,12 +1270,19 @@ const SMALLEST = 0.8
 /** On a touch screen they are drawn this much bigger, and never smaller than their size with a mouse: fingers need the room. */
 const FINGER_SCALE = 1.15
 /** Told to fit the width, controls are not drawn smaller than this by default: under a finger, and with a mouse. `minScale` says otherwise. */
+/** Told to fit the width (fit: "width"), a panel with room to spare is drawn bigger, but no bigger than this. `maxScale` says otherwise. */
+const GROWN_MOST = 1.6
 const FINGER_LEAST = 0.8
 const MOUSE_LEAST = 0.5
 /** Where the plates have to be moved to be seen, at least this much height is left to see them in, in points: the scope goes first. */
 const SEEN_LEAST = 190
 /** Lines of plates that are this part of the width already are spread to fill all of it. */
 const FILLS = 0.6
+/** Plates let go while moving faster than this, in points a millisecond, carry on; they slow to a third in this many milliseconds. */
+const FLING_LEAST = 0.15
+const FLING_FADE = 320
+/** How far a finger on a slider goes, in points, before it is clear whether it means the slider or to move the plates. */
+const MEANT_AFTER = 8
 /** A finger on one of these moves the plates under it when there is more than fits: they take no hand themselves. */
 const SLIDES = new Set(['label', 'scope', 'meter'])
 
@@ -1304,16 +1343,26 @@ class Panel {
     // What a finger holds when it moves the plates: it is given the pointer as a control is.
     this.scroller = {
       held: false, bar: false, last: 0,
-      down: (p) => { this.scroller.last = p.y; this.scroller.lastX = p.x },
+      down: (p) => { this.scroller.last = p.y; this.scroller.lastX = p.x; this.scroller.at = performance.now(); this.scroller.speed = [0, 0]; this.fling = null },
       move: (p) => {
         const v = this.viewport, by = p.y - this.scroller.last, across = p.x - this.scroller.lastX
         this.scroller.last = p.y
         this.scroller.lastX = p.x
+        // How fast the finger is going, in points a millisecond: the plates carry on at that speed when it lifts.
+        const now = performance.now(), took = Math.max(1, now - this.scroller.at), s = this.scroller.speed
+        this.scroller.at = now
+        this.scroller.speed = [s[0] * 0.4 - across / took * 0.6, s[1] * 0.4 - by / took * 0.6]
         // On the bar the thumb follows the finger; anywhere else the plates do.
         if (v) this.scrollBy(this.scroller.bar ? by * (v.h + v.max) / v.h : -by, this.scroller.bar ? 0 : -across)
       },
-      up() {}, touch() {},
+      up: () => {
+        const [vx, vy] = this.scroller.speed
+        if (!this.scroller.bar && performance.now() - this.scroller.at < 80 && Math.hypot(vx, vy) > FLING_LEAST) this.fling = { vx, vy, at: performance.now() }
+      },
+      touch() {},
     }
+    this.fling = null // the plates still moving after a finger let them go
+    this.waits = new Map() // pointer id -> a slider a finger is on, until it is clear whether the finger means the slider or the plates
 
     const listen = (target, type, fn, how) => {
       target.addEventListener(type, fn, how)
@@ -1351,7 +1400,10 @@ class Panel {
 
   close() {
     cancelAnimationFrame(this.raf)
-    for (const item of this.items) if (item.kind === 'keyboard') item.release()
+    for (const item of this.items) {
+      if (item.kind === 'keyboard') item.release()
+      if (item.unheed) { try { item.unheed() } catch (e) { /* already gone */ } item.unheed = null }
+    }
     for (const undo of this.undo.splice(0)) undo()
     this.layer.remove()
     this.items.length = 0
@@ -1403,7 +1455,29 @@ class Panel {
     const item = new Kind(this, kind, spec)
     this.items.push(item)
     this.seat(item)
+    this.heed(item)
     return item
+  }
+  /**
+   * A target that can say when a setting of its own changes shape (`onChange(fn)`: fn is called with the
+   * setting's name, or with nothing for all of them) is listened to: the control asks about its setting
+   * again (its choices, its range, its unit), is drawn again, and laid out again in case it is wider.
+   * What `onChange` gives back, if it is a function, stops the listening when the control goes.
+   */
+  heed(item) {
+    if (!item.target || item.param == null || !item.refresh) return
+    const listen = method(item.target, 'onChange', 'on_change')
+    if (!listen) return
+    let stop = null
+    const heard = (name) => {
+      if (!this.items.includes(item) || (name != null && name !== item.param)) return
+      item.refresh()
+      // A host that keeps the control elsewhere is told what it now is, as it was when it was made.
+      this.made.push(item.id, item.min ?? 0, item.max ?? 1, item.default ?? 0, (item.choices || []).join('|'), item.i ?? item.v)
+      this.arrange = true
+    }
+    try { stop = listen(heard) } catch (e) { /* a target whose onChange is something else */ }
+    item.unheed = typeof stop === 'function' ? stop : null
   }
   /** A box of one kind inside another. A row is kept with the controls too: a host counts it among them. */
   newBox(kind, spec, home) {
@@ -1486,6 +1560,7 @@ class Panel {
       const i = this.items.indexOf(item)
       if (i < 0) return
       if (item.kind === 'keyboard') item.release()
+      if (item.unheed) { try { item.unheed() } catch (e) { /* already gone */ } item.unheed = null }
       this.items.splice(i, 1)
       for (const [id, held] of this.grabs) if (held === item) this.grabs.delete(id)
       this.stale.delete(item)
@@ -1835,7 +1910,11 @@ class Panel {
     // How much wider than the room the widest line is, with everything in it as narrow as it goes.
     // (Told not to wrap, nothing is squeezed to fit: the one scale does it all, so every line is spaced alike.)
     const least = this.hold ? 'w' : 'min'
-    for (const line of lines) this.over = Math.max(this.over, line.kids.reduce((sum, kid) => sum + kid.m[least], gap * (line.kids.length - 1)) - room)
+    for (const line of lines) {
+      this.over = Math.max(this.over, line.kids.reduce((sum, kid) => sum + kid.m[least], gap * (line.kids.length - 1)) - room)
+      // And how wide the widest line is, of those that do not fill the room whatever its width (a scope's does).
+      if (!line.kids.some((kid) => kid.full || kid.m.greedy)) this.widest = Math.max(this.widest, line.w)
+    }
     for (const line of lines) line.wide = line.kids.some((kid) => kid.full || kid.m.greedy)
     this.lines += lines.length
     return {
@@ -1877,7 +1956,7 @@ class Panel {
     const k = this.k = { u, compact, pad: (compact ? 5 : 8) * u, gap: (compact ? 5 : 8) * u, title: (compact ? 18 : 22) * u }
     const margin = options.margin * u
     this.plates = []; this.titles = []; this.rules = []; this.tabs = []
-    this.viewport = null; this.viewNow = null; this.wraps = 0; this.lines = 0; this.over = 0
+    this.viewport = null; this.viewNow = null; this.wraps = 0; this.lines = 0; this.over = 0; this.widest = 0
     this.hold = options.wrap === false || (options.fit === 'width' && !set)
     this.columnsNow = this.columnsAt(W)
     for (const item of this.items) { item.hidden = false; item.view = null }
@@ -2124,6 +2203,15 @@ class Panel {
       this.squeeze = squeeze
       // A group told not to wrap, in a panel that otherwise may: the same one scale, found the same way.
       u = narrowed(u, !this.compose(u, 0).fits)
+      // fit: "width" fills the width whichever way: with room to spare the panel is drawn bigger, as far as
+      // `maxScale` and no further than still fits the height.
+      if (options.fit === 'width' && !set && this.compose(u, 0).fits && this.widest > 0 && this.widest < this.roomWide - 1) {
+        const most = Math.min(options.maxScale ?? GROWN_MOST, u * this.roomWide / this.widest * 0.998)
+        for (const part of [1, 0.875, 0.75, 0.625, 0.5, 0.375, 0.25, 0.125]) {
+          const bigger = u + (most - u) * part
+          if (bigger > u + 1e-3 && this.compose(bigger, 0).fits && this.over <= 0.5) { u = bigger; break }
+        }
+      }
     }
     this.scale = u
     this.squeeze = squeeze || 0
@@ -2181,6 +2269,16 @@ class Panel {
     }
     this.frames++
     for (const item of this.items) if (item.frame) item.frame(now)
+    if (this.fling) {
+      // Let go while moving, the plates carry on and slow down, and stop at either end.
+      const f = this.fling, took = Math.min(50, performance.now() - f.at), v = this.viewport
+      f.at = performance.now()
+      const was = v ? [v.scroll, v.scrollX] : null
+      if (v) this.scrollBy(f.vy * took, f.vx * took)
+      const fade = Math.pow(1 / 3, took / FLING_FADE)
+      f.vx *= fade; f.vy *= fade
+      if (!v || Math.hypot(f.vx, f.vy) < 0.02 || (was[0] === v.scroll && was[1] === v.scrollX)) this.fling = null
+    }
     const { g, ratio } = this
     if (this.arrange || this.shift) {
       const quick = !this.arrange
@@ -2297,6 +2395,13 @@ class Panel {
     }
     if (v.scroll > 0.5) shade(v.y, v.y + 16 * u)
     if (v.scroll < v.max - 0.5) shade(v.y + v.h, v.y + v.h - 16 * u)
+    if (v.maxX > 0.5) {
+      // Moved from side to side: a thin bar along the bottom says how far across they are.
+      const wide = v.w - v.gutter, long = Math.max(28 * u, wide * wide / (wide + v.maxX))
+      rounded(g, v.x + (wide - long) * v.scrollX / v.maxX, v.y + v.h - 5 * u, long, 3 * u, 1.5 * u)
+      g.fillStyle = THEME.track
+      g.fill()
+    }
     if (v.max <= 0.5) return
     const bar = this.bar()
     rounded(g, bar.x, v.y, bar.w, v.h, bar.w / 2)
@@ -2359,7 +2464,8 @@ class Panel {
   /** Is anything of the controls at this point: a control, a tab, or the bar beside plates that can be moved? */
   covers(x, y) {
     const v = this.viewport
-    return !!this.under(x, y) || !!this.tabAt(x, y) || (!!v && x >= v.right && x < v.right + v.gutter && y >= v.y && y < v.y + v.h)
+    // Where the plates can be moved, the whole of where they are seen is the controls': a finger there moves them.
+    return !!this.under(x, y) || !!this.tabAt(x, y) || (!!v && x >= v.x && x < v.x + v.w && y >= v.y && y < v.y + v.h)
   }
   pointerDown(e) {
     if (e.pointerType === 'mouse' && e.button !== 0) return
@@ -2390,15 +2496,41 @@ class Panel {
       item.reset()
       return
     }
+    // A slider that lies across the way the plates move: the finger may mean either. It is the slider's if it
+    // goes along the slider, and the plates' if it clearly goes the way they move.
+    if (item.kind === 'slider' && item.view && v && (item.vertical ? v.maxX > 0.5 : v.max > 0.5) && !this.scroller.held) {
+      this.waits.set(e.pointerId, { item, from: p })
+      return
+    }
     this.grabs.set(e.pointerId, item)
     item.held = true
     item.down(p)
   }
   pointerMove(e) {
+    const wait = this.waits.get(e.pointerId)
+    if (wait) {
+      const p = this.point(e), dx = Math.abs(p.x - wait.from.x), dy = Math.abs(p.y - wait.from.y)
+      if (Math.max(dx, dy) < MEANT_AFTER * this.u) return
+      this.waits.delete(e.pointerId)
+      const along = wait.item.vertical ? dy : dx, cross = wait.item.vertical ? dx : dy
+      const item = cross > along * 1.5 ? this.scroller : wait.item
+      if (item === this.scroller) item.bar = false
+      this.grabs.set(e.pointerId, item)
+      item.held = true
+      item.down(wait.from)
+    }
     const item = this.grabs.get(e.pointerId)
     if (item) item.move(this.point(e))
   }
   pointerUp(e) {
+    const wait = this.waits.get(e.pointerId)
+    if (wait) {
+      // It never went anywhere: a tap on the slider, which brings its handle there.
+      this.waits.delete(e.pointerId)
+      wait.item.down(wait.from)
+      wait.item.up(this.point(e))
+      return
+    }
     const item = this.grabs.get(e.pointerId)
     if (!item) return
     this.grabs.delete(e.pointerId)
