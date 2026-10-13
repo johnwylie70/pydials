@@ -256,7 +256,7 @@ def test_a_grid_of_steps_pads_and_a_wheel_are_sent_and_heard():
 def test_patterns_are_lists_and_the_engines_text_and_what_a_hand_draws_arrives_as_text():
     r = start("""
         from pydials import *
-        pad = {"gatePattern": "x.x."}
+        pad = {"trance_gate": "x.x."}
         lane = steps("accent", 8)
         gate = trance_gate("gate", "x.5.9..3")
         tied = trance_gate("tied", pad)
@@ -281,9 +281,9 @@ def test_patterns_are_lists_and_the_engines_text_and_what_a_hand_draws_arrives_a
     assert lines[0] == ("[0, 0, 0, 0, 0, 0, 0, 0] [9, 0, 5, 0, 9, 0, 0, 3] x.5.x..3 8 x.x. 1 - 3 2 _ 1^ ~3 5':4 True "
                         "{'note': 5, 'octave': 1, 'tie': False, 'accent': False, 'slide': False, 'length': 4} 1^ 1 ~3 - 1' ~1 2^ -")
     assert sent(r, "set") == [[1, "value", "x..X"], [2, "value", "x35.x..3"], [1, "step", 2], [4, "value", "1 - 2' 3,^:6 ~4"], [3, "value", "2468246824682468"]]
-    assert lines[1] == "[1, 0, 0, 1] True {'gatePattern': '2468246824682468'} 1 - 2' 3,^:6 ~4 5"
+    assert lines[1] == "[1, 0, 0, 1] True {'trance_gate': '2468246824682468'} 1 - 2' 3,^:6 ~4 5"
     r = tick({"c": [3, "X..x", 4, "3 2 1"]})
-    assert "{'gatePattern': '2468246824682468'}" in r["out"]         # update() has run again and set the name once more
+    assert "{'trance_gate': '2468246824682468'}" in r["out"]         # update() has run again and set the name once more
 
 
 def test_a_drum_sequencer_is_worked_from_python_and_its_steps_are_heard():

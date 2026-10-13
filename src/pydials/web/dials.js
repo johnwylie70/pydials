@@ -4611,7 +4611,7 @@ function drawCount(g, control, u, n) {
   g.stroke()
   words(g, String(n), b.x + b.w / 2, cy + 0.5 * u, 12 * u, THEME.text, 'center', '600')
 }
-/** The step a target says is sounding, if it says: its step() or its position(), or the setting of that name (a synth's "gateStep"). Below 0 is none. */
+/** The step a target says is sounding, if it says: its step() or its position(), or the setting of that name (a synth's "tranceGateStep"). Below 0 is none. */
 function soundingOf(target, length, name) {
   const ask = method(target, 'step', 'position')
   const at = ask ? ask() : name ? readTarget(target, name) : null
@@ -4756,10 +4756,10 @@ class StepLane extends Control {
  * across to draw. It is a lane of steps with levels, and finds its target's pattern by name.
  */
 class TranceGate extends StepLane {
-  get names() { return ['gatePattern', 'gate_pattern', 'pattern'] }
+  get names() { return ['tranceGate', 'trance_gate', 'pattern'] }
   get bars() { return true }
   get presets() { return this.known || GATE_NAMED }
-  get sounding() { return 'gateStep' }
+  get sounding() { return 'tranceGateStep' }
   get marks() { return GATE_MARKS }
 }
 
@@ -5465,7 +5465,7 @@ class DrumSeq extends Control {
 
 /** The settings that go beside a pattern, each under the names a target may give it (a synth's own first). One is made only for a setting the target has, and this table is all that says the names. */
 const BESIDE = {
-  tranceGate: [['depth', ['gateDepth', 'gate.depth', 'gate_depth']], ['rate', ['gateRate', 'gate.rate', 'gate_rate']], ['smooth', ['gateSmooth', 'gate.smooth', 'gate_smooth']], ['swing', ['gateSwing', 'gate.swing', 'gate_swing']], ['sends', ['gateSends', 'gate.sends', 'gate_sends']], ['stereo', ['gateStereo', 'gate.stereo', 'gate_stereo']]],
+  tranceGate: [['depth', ['tranceGateDepth', 'trance_gate_depth']], ['rate', ['tranceGateRate', 'trance_gate_rate']], ['smooth', ['tranceGateSmooth', 'trance_gate_smooth']], ['swing', ['tranceGateSwing', 'trance_gate_swing']], ['sends', ['tranceGateSends', 'trance_gate_sends']], ['stereo', ['tranceGateStereo', 'trance_gate_stereo']]],
   arpPattern: [['rate', ['arpRate', 'arp_rate']], ['order', ['arpOrder', 'arp_order']], ['octaves', ['arpOctaves', 'arp_octaves']], ['length', ['arpGate', 'arp_gate']], ['style', ['arpStyle', 'arp_style']], ['swing', ['arpSwing', 'arp_swing']]],
 }
 /**

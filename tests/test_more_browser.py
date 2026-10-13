@@ -174,7 +174,7 @@ from pyctures import *
 from pydials import *
 
 # A thing in the page that can be played, and keeps a gate's pattern as text, as a synth would.
-kit = js.Function('return { log: [], gatePattern: "x.x.", get(name) { return this[name] }, set(name, value) { this[name] = value }, describe(name) { return name === "gatePattern" ? { kind: "pattern" } : undefined }, noteOn(note, velocity) { this.log.push(note) }, noteOff(note) {} }')()
+kit = js.Function('return { log: [], tranceGate: "x.x.", get(name) { return this[name] }, set(name, value) { this[name] = value }, describe(name) { return name === "tranceGate" ? { kind: "pattern" } : undefined }, noteOn(note, velocity) { this.log.push(note) }, noteOff(note) {} }')()
 js.kit = kit
 heard = []
 gate = trance_gate("gate", kit)
@@ -191,7 +191,7 @@ def update(dt):
     # The gate's second bar, tapped on: the thing in the page and Python both have the new pattern.
     x, y = w.page.evaluate("(() => { const g = %s, c = g.spotOf(1, g.u), b = document.querySelector('[data-pyctures-src] canvas').getBoundingClientRect(); return [b.left + c.x + c.w / 2, b.top + c.y + c.h / 2] })()" % gate)
     w.page.mouse.click(x, y)
-    w.wait("window.result[0] === 'xxx.' && window.kit.gatePattern === 'xxx.'")
+    w.wait("window.result[0] === 'xxx.' && window.kit.tranceGate === 'xxx.'")
     x, y = w.page.evaluate("(() => { const s = %s, p = s.parts(s.u).play, b = document.querySelector('[data-pyctures-src] canvas').getBoundingClientRect(); return [b.left + p.x + p.w / 2, b.top + p.y + p.h / 2] })()" % seq)
     w.page.mouse.click(x, y)                                    # play: the page plays the kit, and Python hears each step
     w.wait("window.result[1] && window.result[2] && window.result[3] && window.kit.log.includes(36) && window.kit.log.includes(38)")

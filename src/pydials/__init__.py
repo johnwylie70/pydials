@@ -2188,7 +2188,7 @@ class Steps(_Bound):
 class TranceGate(Steps):
     """A gate's pattern: steps that are bars, each as tall as the gate is open."""
     kind = "tranceGate"
-    _names = ("gatePattern", "gate_pattern", "pattern")
+    _names = ("trance_gate", "tranceGate", "pattern")
     _presets = GATE_NAMED
     _marks = GATE_MARKS
     _plated = True
@@ -2402,7 +2402,7 @@ def steps(label=None, a=None, b=None, *, value=None, max=None, levels=None, acce
     `lane.value` is the levels (0 for off), `lane.steps` each as a dict and `lane.text` the same as text
     ("x...x.5."); any of the three may be set. `lane.length` is how many are in use (the − and + change it, up to
     max=), and `lane.step = 3` lights the one that is sounding. levels=True makes each a bar whose height is its
-    level. steps("gate", pad, "gate_pattern") reads and writes a pattern a target keeps, as text or as a list."""
+    level. steps("lane", thing, "pattern") reads and writes a pattern a target keeps, as text or as a list."""
     return Steps(label, a, b, _options(value=value, max=max, levels=levels, accents=accents, velocity=velocity, length=length,
                                        x=x, y=y, share=share, span=span, colour=colour, color=color, on_change=on_change))
 
