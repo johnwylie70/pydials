@@ -430,3 +430,62 @@ keyboard(lead, octave=3, octaves=2)
     w.page.screenshot(path=str(SHOTS / ("owner_rows_%d.png" % size[0])))
     w.clean()
     w.page.close()
+
+
+PANEL_ROWS = """
+label("oscillator"); select("wave", lead, "wave"); dial("width", lead, "width"); dial("pwm", lead, "pwm"); dial("sub", lead, "sub")
+row()
+label("unison"); dial("voices", lead, "voices"); dial("detune", lead, "detune"); dial("spread", lead, "spread")
+label("filter"); mode = rotary("filter", lead, "filter"); dial("cutoff", lead, "cutoff", size="large"); dial("resonance", lead, "resonance")
+row()
+label("delay"); dial("amount", lead, "echo"); dial("time", lead, "delay.time")
+label("reverb"); dial("amount", lead, "reverb"); dial("size", lead, "reverb.size")
+keyboard(lead, octave=3, octaves=2)
+
+def update(dt):
+    now = layout()
+    js.result = [mode.value, mode.index, now.width, now.height, now.scale]
+"""
+
+
+@pytest.mark.parametrize("size", [(390, 844), (1200, 900)])
+def test_told_not_to_wrap_every_row_is_as_written_at_one_scale_and_a_rotary_turned_there_is_heard(browser, pyctures_run, tmp_path, size):
+    w = Watched(browser, pyctures_run(scene_file(tmp_path, LEAD + "layout(wrap=False, min_scale=0)\n" + PANEL_ROWS)).url, size=size, touch=True)
+    w.ready(14)
+    w.page.wait_for_timeout(300)
+    got = w.page.evaluate(PLATES)
+    assert got["wrong"] == [] and got["lines"] == [["oscillator"], ["unison", "filter"], ["delay", "reverb"]] and not got["moved"]
+    # One scale: every usual dial is the same size, the large one that much bigger, and their labels and values line up.
+    sizes = w.page.evaluate("%s.items.filter((c) => c.kind === 'dial').map((c) => [c.label, Math.round(c.w / c.u), c.u, c.y, c.h])" % PANEL)
+    assert {s[1] for s in sizes} == {76, 90} and len({s[2] for s in sizes}) == 1
+    row = [s for s in sizes if s[0] in ("cutoff", "resonance")]
+    assert row[0][3:] == row[1][3:]
+    # The rotary: dragged up past its next notch (60 points at full size), it clicks to the next choice, and Python is told.
+    i = w.page.evaluate("%s.items.findIndex((c) => c.kind === 'rotary')" % PANEL)
+    u = w.page.evaluate("%s.items[%d].u" % (PANEL, i))
+    w.wait("window.result && window.result[0] === 'lowpass'")
+    w.drag(i, 0, -45 * u)
+    w.wait("window.result[0] === 'highpass' && window.result[1] === 1")
+    # Python can read what the layout came to.
+    assert w.page.evaluate("window.result.slice(2, 4)") == list(size) and abs(w.page.evaluate("window.result[4]") - u) < 0.002
+    SHOTS.mkdir(exist_ok=True)
+    w.page.screenshot(path=str(SHOTS / ("nowrap_%d.png" % size[0])))
+    w.clean()
+    w.page.close()
+
+
+def test_a_panel_of_a_set_size_keeps_its_proportions_on_a_phone_and_a_tablet(browser, pyctures_run, tmp_path):
+    seen = []
+    for size in ((390, 844), (1200, 900)):
+        w = Watched(browser, pyctures_run(scene_file(tmp_path, LEAD + "layout(size=(900, 640))\n" + PANEL_ROWS)).url, size=size, touch=True)
+        w.ready(14)
+        w.page.wait_for_timeout(300)
+        s = min(size[0] / 900, size[1] / 640)
+        ox, oy = (size[0] - 900 * s) / 2, (size[1] - 640 * s) / 2
+        seen.append(w.page.evaluate("([s, ox, oy]) => %s.items.filter((c) => c.w > 0 && !c.items).map((c) => [c.label, Math.round((c.x - ox) / s), Math.round((c.y - oy) / s), Math.round(c.w / s), Math.round(c.h / s)])" % PANEL, [s, ox, oy]))
+        assert w.page.evaluate("%s.designed.map(Math.round)" % PANEL) == [round(ox), round(oy), round(900 * s), round(640 * s)]
+        w.drag(w.page.evaluate("%s.items.findIndex((c) => c.label === 'width')" % PANEL), 0, -45 * w.page.evaluate("%s.u" % PANEL))
+        w.wait("Math.abs(%s.items.find((c) => c.label === 'width').value - 0.75) < 0.01" % PANEL)
+        w.clean()
+        w.page.close()
+    assert all(abs(a - b) <= 1 for one, other in zip(*seen) for a, b in zip(one[1:], other[1:])) and len(seen[0]) > 12

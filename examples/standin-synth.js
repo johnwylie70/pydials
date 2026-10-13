@@ -5,6 +5,8 @@
 // (or some of them) can be put behind a dial, a keyboard, a scope and a meter.
 
 const WAVES = ['sine', 'triangle', 'saw', 'square']
+// How each kind of room dies away: how long it lasts beside its size, how steeply it falls, and how fast it flutters (a spring does).
+const ROOMS = [[0.4, 4, 0], [1, 3, 0], [0.8, 2, 0], [0.6, 2.5, 27]]
 const PARAMS = {
   wave: { kind: 'choice', choices: WAVES, default: 2 },
   sub: { min: 0, max: 1, default: 0 },
@@ -20,6 +22,7 @@ const PARAMS = {
   delay_time: { min: 0.05, max: 1, default: 0.3, unit: 's' },
   delay_feedback: { min: 0, max: 0.9, default: 0.4 },
   reverb: { min: 0, max: 1, default: 0 },
+  reverb_type: { kind: 'choice', choices: ['room', 'hall', 'plate', 'spring'], default: 1 },
   reverb_size: { min: 0.2, max: 4, default: 1.5, unit: 's' },
   volume: { min: 0, max: 1, default: 0.5 },
 }
@@ -50,11 +53,12 @@ function makeSynth(options = {}) {
     analyser.connect(audio.destination)
     for (const name in values) apply(name)
   }
-  const room = (seconds) => {
-    const length = Math.round(audio.sampleRate * seconds), sound = audio.createBuffer(2, length, audio.sampleRate)
+  const room = () => {
+    const [lasts, falls, flutter] = ROOMS[values.reverb_type] || ROOMS[1]
+    const length = Math.max(64, Math.round(audio.sampleRate * values.reverb_size * lasts)), sound = audio.createBuffer(2, length, audio.sampleRate)
     for (let side = 0; side < 2; side++) {
       const data = sound.getChannelData(side)
-      for (let i = 0; i < length; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, 3)
+      for (let i = 0; i < length; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, falls) * (flutter ? 0.6 + 0.4 * Math.sin(i / audio.sampleRate * flutter * 6.283) : 1)
     }
     return sound
   }
@@ -68,7 +72,7 @@ function makeSynth(options = {}) {
     else if (name === 'delay_time') echo.delayTime.setTargetAtTime(value, now, 0.05)
     else if (name === 'delay_feedback') again.gain.setTargetAtTime(value, now, 0.01)
     else if (name === 'reverb') halled.gain.setTargetAtTime(value * 0.6, now, 0.01)
-    else if (name === 'reverb_size') hall.buffer = room(value)
+    else if (name === 'reverb_size' || name === 'reverb_type') hall.buffer = room()
     else if (name === 'wave') for (const voice of voices.values()) for (const osc of voice.oscs) if (!osc.below) osc.type = shape()
   }
   const shape = () => (WAVES[values.wave] === 'saw' ? 'sawtooth' : WAVES[values.wave])
@@ -77,6 +81,7 @@ function makeSynth(options = {}) {
     set(name, value) {
       if (!(name in PARAMS)) throw new Error(`This synth has no setting called "${name}". It has: ${Object.keys(PARAMS).join(', ')}`)
       if (name === 'wave' && typeof value === 'string') value = Math.max(0, WAVES.indexOf(value === 'sawtooth' ? 'saw' : value))
+      if (name === 'reverb_type' && typeof value === 'string') value = Math.max(0, PARAMS.reverb_type.choices.indexOf(value))
       values[name] = value
       apply(name)
     },

@@ -49,8 +49,8 @@ import sys
 
 __version__ = "0.0.0"
 
-__all__ = ["dial", "slider", "button", "toggle", "select", "keyboard", "scope", "meter",
-           "label", "group", "row", "column", "grid", "page", "spacer", "layout", "room", "theme"]
+__all__ = ["dial", "slider", "button", "toggle", "select", "rotary", "keyboard", "scope", "meter",
+           "label", "group", "row", "column", "grid", "page", "spacer", "wrap", "layout", "room", "theme"]
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _source = [None]
@@ -78,6 +78,8 @@ class _Run:
         self.next_id = 1
         self.beating = False
         self.room = None        # the rectangle no control is on, as the page last told it
+        self.view = None        # the picture's width and height and the scale the controls are drawn at, likewise
+        self.on_resize = None   # what the scene asked to be called with them when they change
 
 
 _run = _Run()
@@ -135,7 +137,12 @@ def _heard(e):
         if item is not None:
             item._played(played[i + 1], played[i + 2])
     if e.get("f"):
-        _run.room = list(e["f"])
+        said = list(e["f"])
+        _run.room = said[:4]
+        if len(said) >= 7 and said[4:7] != _run.view:
+            _run.view = said[4:7]
+            if _run.on_resize:
+                _run.on_resize(Layout(*_run.view))
     if e.get("b"):
         for item in list(items.values()):
             item._frame()
@@ -613,6 +620,11 @@ class Select(_Bound):
         return str(self.value)
 
 
+class Rotary(Select):
+    """A knob that clicks between a few choices. `value` is the choice, `index` its place in the list."""
+    kind = "rotary"
+
+
 class Keyboard(Control):
     """The piano keyboard. `notes` is what is held on it now (MIDI numbers: 60 is middle C)."""
     kind = "keyboard"
@@ -802,6 +814,16 @@ class Box:
         return "<%s %s>" % (self.kind, self.label)
 
 
+class Layout:
+    """What the layout came to: the picture's width and height, and the scale the controls are drawn at."""
+
+    def __init__(self, width, height, scale):
+        self.width, self.height, self.scale = width, height, scale
+
+    def __repr__(self):
+        return "Layout(width=%r, height=%r, scale=%r)" % (self.width, self.height, self.scale)
+
+
 class Room:
     """A rectangle: x, y, width and height, and its left, top, right and bottom edges."""
 
@@ -866,19 +888,34 @@ def toggle(label="", a=None, b=None, *, value=None, x=None, y=None, size=None, s
                                         on_change=on_change))
 
 
-def select(label="", a=None, b=None, *, value=None, x=None, y=None, size=None, share=None, span=None, colour=None,
+def select(label="", a=None, b=None, *, value=None, style=None, x=None, y=None, size=None, share=None, span=None,
+           colour=None, color=None, on_change=None):
+    """One of a list: select("wave", ["sine", "saw", "square"]), or select("wave", lead, "wave").
+
+    style="rotary" draws it as a knob that clicks between the choices: the same as rotary(…)."""
+    kind = Rotary if style == "rotary" else Select
+    return kind(label, a, b, _options(value=value, x=x, y=y, size=size, share=share, span=span, colour=colour, color=color,
+                                      on_change=on_change))
+
+
+def rotary(label="", a=None, b=None, *, value=None, x=None, y=None, size=None, share=None, span=None, colour=None,
            color=None, on_change=None):
-    """One of a list: select("wave", ["sine", "saw", "square"]), or select("wave", lead, "wave")."""
-    return Select(label, a, b, _options(value=value, x=x, y=y, size=size, share=share, span=span, colour=colour, color=color,
+    """A knob that clicks between a few choices, as the one on a synth that picks a waveform does.
+
+    rotary("mode", ["room", "hall", "plate", "spring"], "hall"), or rotary("wave", lead, "wave") for a setting
+    that has choices. Drag to turn it from notch to notch, or tap a name; `mode.value` is the choice and
+    `mode.index` its place. The names are written round it where there is room: size="large" shows more."""
+    return Rotary(label, a, b, _options(value=value, x=x, y=y, size=size, share=share, span=span, colour=colour, color=color,
                                         on_change=on_change))
 
 
-def keyboard(target=None, *, octave=None, octaves=None, keys=None, hints=None, x=None, y=None, width=None, height=None,
-             share=None, span=None, colour=None, color=None, on_note_on=None, on_note_off=None):
+def keyboard(target=None, *, octave=None, octaves=None, keys=None, hints=None, animate=None, x=None, y=None, width=None,
+             height=None, share=None, span=None, colour=None, color=None, on_note_on=None, on_note_off=None):
     """A piano keyboard that plays `target`: keyboard(lead, octave=4). With no target, read `notes` or give on_note_on.
 
-    Made outside any group it lies along the bottom; made in one, it is where the group puts it."""
-    return Keyboard(target, _options(octave=octave, octaves=octaves, keys=keys, hints=hints, x=x, y=y, width=width,
+    Made outside any group it lies along the bottom; made in one, it is where the group puts it. The keys slide
+    when the octave changes; animate=False makes them jump."""
+    return Keyboard(target, _options(octave=octave, octaves=octaves, keys=keys, hints=hints, animate=animate, x=x, y=y, width=width,
                                      height=height, share=share, span=span, colour=colour, color=color,
                                      on_note_on=on_note_on, on_note_off=on_note_off))
 
@@ -919,7 +956,7 @@ def _box(kind, title, **options):
     return Box(kind, spec)
 
 
-def group(title=None, *, columns=None, at=None, share=None, span=None, x=None, y=None, width=None, height=None,
+def group(title=None, *, columns=None, wrap=None, at=None, share=None, span=None, x=None, y=None, width=None, height=None,
           plate=None, dividers=None, gap=None, align=None, colour=None, color=None):
     """A titled plate that keeps its controls together.
 
@@ -929,15 +966,18 @@ def group(title=None, *, columns=None, at=None, share=None, span=None, x=None, y
         group("filter")                       # or in a straight line: what is made next is in it,
         dial("cutoff", lead, "cutoff")        # until the next group, row or page
 
-    columns=3 lines them up three to a line; at="left" (or "right", "top", "bottom") makes it a strip along
+    wrap=False keeps its controls on one line whatever the width; columns=3 lines them up three to a line; at="left" (or "right", "top", "bottom") makes it a strip along
     that edge; share=2 gives it twice its neighbour's part of the line; colour= is the colour of its controls."""
-    return _box("group", title, columns=columns, at=at, share=share, span=span, x=x, y=y, width=width, height=height,
+    return _box("group", title, columns=columns, wrap=wrap, at=at, share=share, span=span, x=x, y=y, width=width, height=height,
                 plate=plate, dividers=dividers, gap=gap, align=align, colour=colour, color=color)
 
 
-def row(title=None, *, share=None, span=None, plate=None, dividers=None, gap=None, align=None, colour=None, color=None):
-    """`with row():` what is made inside stands in a line. `row()` alone: the controls made after this start a new line."""
-    return _box("row", title, share=share, span=span, plate=plate, dividers=dividers, gap=gap, align=align,
+def row(title=None, *, wrap=None, share=None, span=None, plate=None, dividers=None, gap=None, align=None, colour=None,
+        color=None):
+    """`with row():` what is made inside stands in a line. `row()` alone: the controls made after this start a new line.
+
+    `with row(wrap=False):` never splits: two groups made inside it stay side by side."""
+    return _box("row", title, wrap=wrap, share=share, span=span, plate=plate, dividers=dividers, gap=gap, align=align,
                 colour=colour, color=color)
 
 
@@ -964,6 +1004,13 @@ def page(name=None, *, colour=None, color=None):
     return _box("page", name, colour=colour, color=color)
 
 
+def wrap():
+    """If this line has to be split, here is where. Nothing happens while everything fits."""
+    api = _page()
+    _run.next_id += 1
+    api.make("row", _run.next_id - 1, {"soft": True})
+
+
 def spacer(size=None, *, share=None):
     """Room between controls: spacer(20) is that many points, spacer() all the room that is left over."""
     api = _page()
@@ -972,14 +1019,35 @@ def spacer(size=None, *, share=None):
 
 
 def layout(**options):
-    """How it is all laid out.
+    """How it is all laid out, each of these left out or given:
 
-    layout(at="bottom") (or "top", "left", "right"), scale=1.2, margin=10, compact=True, dividers=True,
-    plates=False, align="center", backdrop="navy", image="panel.png" (a picture behind the controls), and
-    design=(800, 480): the size that x= and y= are measured in, which is then scaled to the picture."""
-    if isinstance(options.get("design"), tuple):
-        options["design"] = list(options["design"])
-    _page().layout(options)
+    wrap=False              every row stays one row; everything is drawn smaller until the widest fits the width
+    wrap=True               every row() is a new line, and a row is split only when it does not fit
+    min_scale=0.8           told not to wrap, no smaller than this: wider rows are moved from side to side
+    columns=3               so many plates to a line; or by width: columns={"phone": 1, "tablet": 2, "wide": 3}
+    size=(800, 480)         the panel is laid out at this size on every screen, then made to fit the picture whole;
+                            size=800 is a width alone (as is fit="width"): what does not fit is moved up and down
+    scale=1.2               everything bigger or smaller
+    on_resize=fn            fn(now) is called when the picture changes size: now.width, now.height, now.scale
+    at="bottom" (or "top", "left", "right"), margin=10, align="center", compact=True, dividers=True, plates=False,
+    backdrop="navy", image="panel.png" (a picture behind the controls)
+
+    It gives back the picture's width and height and the scale the controls are drawn at, as the page last said
+    them: `layout().width`. In a scene's first lines the page has said nothing yet, and the scale is 1."""
+    api = _page()
+    if "on_resize" in options:
+        _run.on_resize = options.pop("on_resize")
+    if "min_scale" in options:
+        options["minScale"] = options.pop("min_scale")
+    for name in ("size", "design"):
+        if isinstance(options.get(name), tuple):
+            options[name] = list(options[name])
+    if options:
+        api.layout(options)
+    if _run.view:
+        return Layout(*_run.view)
+    size = getattr(_pyctures(), "_scene_size", None)
+    return Layout(*(size() if size else (0, 0)), 1)
 
 
 def room():
@@ -988,7 +1056,7 @@ def room():
     The page works it out and says so with a frame, so in the scene's first lines it is still the whole picture."""
     _page()
     if _run.room:
-        return Room(*_run.room)
+        return Room(*_run.room[:4])
     size = getattr(_pyctures(), "_scene_size", None)
     return Room(0, 0, *(size() if size else (0, 0)))
 

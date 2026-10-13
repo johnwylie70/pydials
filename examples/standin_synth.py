@@ -24,7 +24,7 @@ class Synth:
 
 def make_synth(**settings):
     """A synth: make_synth(wave="saw"). Its settings: wave, sub, voices, detune, filter_cutoff, filter_resonance,
-    attack, decay, sustain, release, delay, delay_time, delay_feedback, reverb, reverb_size, volume."""
+    attack, decay, sustain, release, delay, delay_time, delay_feedback, reverb, reverb_type, reverb_size, volume."""
     js = sys.modules["pyctures"].js
     here = os.path.dirname(os.path.abspath(__file__))
     with open(os.path.join(here, "standin-synth.js"), encoding="utf-8") as f:

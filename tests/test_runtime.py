@@ -320,6 +320,65 @@ def test_room_is_the_whole_picture_until_the_page_says_what_the_controls_left():
     assert out(tick()) == ["102", "0", "298", "300", "400", "300", "298"]
 
 
+def test_a_rotary_is_a_select_drawn_as_a_knob_and_python_knows_its_choice():
+    r = start("""
+        from pydials import *
+        mode = rotary("mode", ["room", "hall", "plate", "spring"], "hall", size="large", on_change=print)
+        other = select("kind", ["a", "b"], style="rotary")
+        def update(dt):
+            print(mode.value, mode.index, other.value)
+    """)
+    assert [(m[0], m[2]) for m in made(r)] == [
+        ("rotary", {"value": "hall", "size": "large", "label": "mode", "choices": ["room", "hall", "plate", "spring"]}),
+        ("rotary", {"label": "kind", "choices": ["a", "b"], "value": "a"})]
+    assert out(r) == ["hall", "1", "a"]
+    # Turned by hand in the page: its place in the list arrives, on_change is called with the choice.
+    assert out(tick({"c": [1, 3]})) == ["spring", "spring", "3", "a"]
+    r = start("""
+        from pydials import *
+        mode = rotary("mode", ["room", "hall"])
+        mode.value = "hall"
+    """)
+    assert sent(r, "set") == [[1, "index", 1]]
+
+
+def test_wrapping_columns_a_set_size_and_marks_are_said_to_the_page_in_its_own_spelling():
+    r = start("""
+        from pydials import *
+        layout(wrap=False, min_scale=0.8)
+        layout(columns={"phone": 1, "wide": 3}, size=(800, 480), scale=1.2)
+        with group("shape", wrap=False):
+            dial("a", 0, 1, size=1.5)
+            wrap()
+            dial("b", 0, 1)
+        with row(wrap=False):
+            group("delay")
+        keyboard(animate=False)
+    """)
+    assert r["error"] is None
+    assert sent(r, "layout") == [[{"$d": {"wrap": False, "minScale": 0.8}}], [{"$d": {"columns": {"$d": {"phone": 1, "wide": 3}}, "size": [800, 480], "scale": 1.2}}]]
+    specs = {m[1]: (m[0], m[2]) for m in made(r)}
+    assert specs[1] == ("group", {"wrap": False, "label": "shape"})
+    assert specs[2][1]["size"] == 1.5 and specs[3] == ("row", {"soft": True}) and specs[5] == ("row", {"wrap": False})
+    assert specs[7] == ("keyboard", {"animate": False})
+
+
+def test_layout_says_the_size_and_scale_the_page_last_told_and_on_resize_is_called_when_they_change():
+    start("""
+        from pydials import *
+        seen = []
+        first = layout(on_resize=lambda now: seen.append((now.width, now.height, now.scale)))
+        def update(dt):
+            now = layout()
+            print(first.width, first.height, first.scale, now.width, now.height, now.scale, seen)
+    """)
+    assert tick()["out"].strip() == "400 300 1 400 300 1 []"
+    assert tick({"f": [0, 120, 400, 180, 400, 300, 0.9]})["out"].strip() == "400 300 1 400 300 0.9 [(400, 300, 0.9)]"
+    # The rectangle changed and the size did not: nothing is called.
+    assert tick({"f": [0, 140, 400, 160, 400, 300, 0.9]})["out"].strip().endswith("[(400, 300, 0.9)]")
+    assert tick({"f": [0, 140, 800, 160, 800, 300, 1]})["out"].strip().endswith("800 300 1 [(400, 300, 0.9), (800, 300, 1)]")
+
+
 def test_each_run_starts_with_no_controls_and_a_page_of_its_own():
     first = start("from pydials import *\ndial('a', 0, 1)\ndial('b', 0, 1)")
     second = start("from pydials import *\ndial('c', 0, 1)")
