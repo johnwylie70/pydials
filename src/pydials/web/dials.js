@@ -5802,7 +5802,8 @@ function dials(canvas, options) {
   return panel.api
 }
 function onlyCanvas() {
-  const found = [...document.querySelectorAll('canvas')].filter((c) => c.dataset.dialsLayer === undefined)
+  // A canvas another library laid over the scene (these controls' own, an effects layer, a scene transition) is not a scene.
+  const found = [...document.querySelectorAll('canvas')].filter((c) => !Object.keys(c.dataset).some((key) => /(?:Layer|Transition)$/.test(key)))
   if (found.length === 1) return found[0]
   throw new Error(found.length
     ? 'There is more than one canvas on this page, so say which one the controls are for: const { dial, slider } = dials(canvas)'
