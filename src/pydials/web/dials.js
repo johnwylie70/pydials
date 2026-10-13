@@ -4443,25 +4443,29 @@ class Envelope extends Control {
  *
  * In place of the steps a pattern may be the name of one that is built in ("trance", "gallop").
  */
+// A GATE'S TEXT AND A ROW OF STEPS' TEXT ARE TWO KINDS OF TEXT, though they look alike. A gate's is the sound
+// engine's, and has no accents; a drum's row (and a lane, and a row of a grid) is this library's own, and has.
+// Neither is to be handed over as the other: each control reads and writes by its own table.
+const GATE_MARKS = { off: '.', on: 'x', accent: null, skipped: ' ', parts: 9 }
 const STEP_MARKS = { off: '.', on: 'x', accent: 'X', skipped: ' |', parts: 9 }
 const ARP_MARKS = { rest: '-', rests: '-.', tie: '_', up: "'", down: ',', accent: '^', length: ':', slide: '~' }
 /** The patterns that are built in, by name: a target that says its own (describe(name).patterns) is believed instead. */
 const GATE_NAMED = { eighths: 'x.x.x.x.x.x.x.x.', offbeat: '..x...x...x...x.', gallop: 'x.xxx.xxx.xxx.xx', trance: 'x.x.xx.xx.x.xx.x', stutter: 'xxx.xx.xx.xxx.x.', pump: '2468246824682468', triplets: 'x..x..x..x..x..x..x..x..', dotted: 'x..x..x.x..x..x.' }
 const ARP_NAMED = { bounce: '1 2 3 2', octaves: "1 1' 1 1'", 'root-fifth': "1 3 1' 3", thumb: '1 2 1 3 1 4 1 3', converge: '1 4 2 3', diverge: '2 3 1 4', offbeat: '- 1 - 2 - 3 - 2', gallop: '1^ - 1 1 2^ - 2 2', trance: '1^ - 3 2 - 1^ 3 -', acid: "1^ 1 ~3 - 1' ~1 2^ -" }
 
-function stepsFromText(text) {
-  const steps = [], parts = STEP_MARKS.parts
+function stepsFromText(text, marks = STEP_MARKS) {
+  const steps = []
   for (const mark of String(text)) {
-    if (STEP_MARKS.skipped.includes(mark)) continue
-    if (mark >= '0' && mark <= '9') steps.push({ level: Math.min(1, Number(mark) / parts), accent: false })
-    else steps.push({ level: mark === STEP_MARKS.off ? 0 : 1, accent: mark === STEP_MARKS.accent })
+    if (marks.skipped.includes(mark)) continue
+    if (mark >= '0' && mark <= '9') steps.push({ level: Math.min(1, Number(mark) / marks.parts), accent: false })
+    else steps.push({ level: mark === marks.off ? 0 : 1, accent: !!marks.accent && mark === marks.accent })
   }
   return steps
 }
-function stepsToText(steps) {
+function stepsToText(steps, marks = STEP_MARKS) {
   return steps.map((s) => {
-    const part = Math.round((s.level || 0) * STEP_MARKS.parts)
-    return part <= 0 ? STEP_MARKS.off : s.accent ? STEP_MARKS.accent : part >= STEP_MARKS.parts ? STEP_MARKS.on : String(part)
+    const part = Math.round((s.level || 0) * marks.parts)
+    return part <= 0 ? marks.off : s.accent && marks.accent ? marks.accent : part >= marks.parts ? marks.on : String(part)
   }).join('')
 }
 /** One step of an arpeggio: a rest, until it is given a note. `length` 0 is the arpeggio's own. */
@@ -4505,6 +4509,7 @@ class Lane {
     this.bars = !!how.bars
     this.accents = !!how.accents
     this.velocity = !!how.velocity
+    this.marks = how.marks || STEP_MARKS // how it is written as text: a gate's lane is told the gate's marks
     this.level = new Array(most).fill(0)
     this.accent = new Array(most).fill(false)
     this.stroke = null
@@ -4512,10 +4517,10 @@ class Lane {
   /** The steps in use, each { on, level, accent }. */
   get steps() { return this.level.slice(0, this.length).map((level, i) => ({ on: level > 0, level, accent: this.accent[i] })) }
   get levels() { return this.level.slice(0, this.length) }
-  get text() { return stepsToText(this.steps) }
+  get text() { return stepsToText(this.steps, this.marks) }
   /** Take a whole row: text, or a list of numbers, of true and false, or of steps. `fit`: its length becomes the row's. */
   take(row, fit) {
-    const steps = typeof row === 'string' ? stepsFromText(row) : [...(row || [])].map((s) => (s != null && typeof s === 'object' ? { level: s.level ?? (s.on === false ? 0 : 1), accent: !!s.accent } : { level: s === true ? 1 : clamp(Number(s) || 0, 0, 1), accent: false }))
+    const steps = typeof row === 'string' ? stepsFromText(row, this.marks) : [...(row || [])].map((s) => (s != null && typeof s === 'object' ? { level: s.level ?? (s.on === false ? 0 : 1), accent: !!s.accent } : { level: s === true ? 1 : clamp(Number(s) || 0, 0, 1), accent: false }))
     if (fit && steps.length) this.length = clamp(steps.length, 1, this.most)
     for (let i = 0; i < this.most; i++) { this.level[i] = steps[i]?.level || 0; this.accent[i] = !!steps[i]?.accent && this.level[i] > 0 }
   }
@@ -4528,7 +4533,7 @@ class Lane {
     return true
   }
   /** A level from where a finger is in a step: `down` is 0 at its top and 1 at its bottom. */
-  high(down) { return clamp(Math.round((1 - down) * STEP_MARKS.parts) / STEP_MARKS.parts, 0, 1) } // (in ninths, as the text has them)
+  high(down) { return clamp(Math.round((1 - down) * this.marks.parts) / this.marks.parts, 0, 1) } // (in ninths, as the text has them)
   /** A finger lands on step i, `down` of the way down it. Each of these three says whether anything changed. */
   begin(i, down) {
     this.stroke = { first: i, down, was: this.level[i], moved: false, paint: this.level[i] ? 0 : 1 }
@@ -4635,7 +4640,7 @@ class StepLane extends Control {
       this.asText = typeof there === 'string' || (!isList(there) && ['text', 'pattern', 'steps'].includes(d.kind))
     }
     const most = clamp(Math.round(spec.max ?? d.max ?? d.steps ?? 32), 1, 64)
-    this.lane = new Lane(most, spec.steps ?? d.length ?? Math.min(16, most), { bars: spec.levels ?? this.bars, accents: spec.accents, velocity: spec.velocity })
+    this.lane = new Lane(most, spec.steps ?? d.length ?? Math.min(16, most), { bars: spec.levels ?? this.bars, accents: spec.accents, velocity: spec.velocity, marks: this.marks })
     this.resizable = spec.length !== false // may its length be changed by hand?
     this.known = d.patterns && typeof d.patterns === 'object' ? d.patterns : null // the target's own named patterns
     const given = spec.value ?? (there === '' ? null : there) ?? d.default
@@ -4650,6 +4655,7 @@ class StepLane extends Control {
   /** The patterns it can be set to by name, and the setting of its target that says which step is sounding. */
   get presets() { return {} }
   get sounding() { return null }
+  get marks() { return STEP_MARKS }
   /** Write a pattern by its name. */
   preset(name) {
     const text = this.presets[String(name).toLowerCase()]
@@ -4732,7 +4738,7 @@ class StepLane extends Control {
     const there = readTarget(this.target, this.param)
     // (An empty pattern is a target that has none: what is drawn here stays, until it is given one.)
     if (there == null || there === '') return
-    const said = typeof there === 'string' ? stepsToText(stepsFromText(named(there, this.presets))) : [...there].join()
+    const said = typeof there === 'string' ? stepsToText(stepsFromText(named(there, this.presets), this.lane.marks), this.lane.marks) : [...there].join()
     if (said === (typeof there === 'string' ? this.text : this.value.join())) return
     this.read(there, true)
     this.panel.arrange = true
@@ -4754,6 +4760,7 @@ class GatePattern extends StepLane {
   get bars() { return true }
   get presets() { return this.known || GATE_NAMED }
   get sounding() { return 'gateStep' }
+  get marks() { return GATE_MARKS }
 }
 
 /** The lanes under an arpeggio's grid, one for each thing a step has besides its note: the mark it is known by, and the step's word for it. */

@@ -1971,6 +1971,9 @@ def pitch_wheel(label=None, a=None, b=None, c=None, **options):
 #
 # In place of the steps a pattern may be the name of one that is built in ("trance", "gallop").
 
+# A gate's text and a row of steps' text are two kinds of text, though they look alike: a gate's is the sound
+# engine's and has no accents; a drum's row (and a lane) is this library's own, and has. Neither is the other.
+GATE_MARKS = {"off": ".", "on": "x", "accent": None, "skipped": " ", "parts": 9}
 STEP_MARKS = {"off": ".", "on": "x", "accent": "X", "skipped": " |", "parts": 9}
 ARP_MARKS = {"rest": "-", "rests": "-.", "tie": "_", "up": "'", "down": ",", "accent": "^", "length": ":", "slide": "~"}
 GATE_NAMED = {"eighths": "x.x.x.x.x.x.x.x.", "offbeat": "..x...x...x...x.", "gallop": "x.xxx.xxx.xxx.xx", "trance": "x.x.xx.xx.x.xx.x",
@@ -1985,17 +1988,17 @@ def _named(given, names):
     return names.get(given.strip().lower(), given) if isinstance(given, str) else given
 
 
-def _steps_from(given):
+def _steps_from(given, marks=STEP_MARKS):
     """A row of steps, however it is written (text, numbers, True and False, or steps), as [level, accent] pairs."""
     if isinstance(given, str):
         out = []
         for mark in given:
-            if mark in STEP_MARKS["skipped"]:
+            if mark in marks["skipped"]:
                 continue
             if mark in "0123456789":
-                out.append([min(1, int(mark) / STEP_MARKS["parts"]), False])
+                out.append([min(1, int(mark) / marks["parts"]), False])
             else:
-                out.append([0 if mark == STEP_MARKS["off"] else 1, mark == STEP_MARKS["accent"]])
+                out.append([0 if mark == marks["off"] else 1, bool(marks["accent"]) and mark == marks["accent"]])
         return out
     out = []
     for step in given or ():
@@ -2006,12 +2009,12 @@ def _steps_from(given):
     return out
 
 
-def _steps_text(steps):
-    marks, parts = [], STEP_MARKS["parts"]
+def _steps_text(steps, marks=STEP_MARKS):
+    out, parts = [], marks["parts"]
     for level, accent in steps:
         part = int((level or 0) * parts + 0.5)
-        marks.append(STEP_MARKS["off"] if part <= 0 else STEP_MARKS["accent"] if accent else STEP_MARKS["on"] if part >= parts else str(part))
-    return "".join(marks)
+        out.append(marks["off"] if part <= 0 else marks["accent"] if accent and marks["accent"] else marks["on"] if part >= parts else str(part))
+    return "".join(out)
 
 
 def _arp_step(**given):
@@ -2072,6 +2075,7 @@ class Steps(_Bound):
     kind = "steps"
     _names = ("pattern", "steps")
     _presets = {}           # the patterns it can be given by name
+    _marks = STEP_MARKS     # how it is written as text
 
     def __init__(self, label, a, b, spec):
         if label is not None and not isinstance(label, str):
@@ -2097,24 +2101,24 @@ class Steps(_Bound):
             spec["label"] = label or spec.get("label")
             if spec.get("value") is None and there not in (None, ""):
                 spec["value"] = there
-        self._cells = _steps_from(_named(spec.get("value"), self._presets))
+        self._cells = _steps_from(_named(spec.get("value"), self._presets), self._marks)
         if not self._cells:
             self._cells = [[0, False] for _ in range(spec.get("steps") or 16)]
         elif spec.get("steps"):
             self._cells = (self._cells + [[0, False]] * spec["steps"])[:spec["steps"]]
         if "target" not in spec:
-            spec["value"] = _steps_text(self._cells)
+            spec["value"] = _steps_text(self._cells, self._marks)
             spec["steps"] = len(self._cells)
         self._step = -1
         Control.__init__(self, spec)
 
     value = property(lambda self: [level for level, accent in self._cells])
     steps = property(lambda self: [{"on": level > 0, "level": level, "accent": accent} for level, accent in self._cells])
-    text = property(lambda self: _steps_text(self._cells))
+    text = property(lambda self: _steps_text(self._cells, self._marks))
     length = property(lambda self: len(self._cells))
 
     def _take(self, given):
-        self._cells = _steps_from(_named(given, self._presets))
+        self._cells = _steps_from(_named(given, self._presets), self._marks)
         self._set("value", self.text)
         self._out_to_target()
 
@@ -2158,10 +2162,10 @@ class Steps(_Bound):
 
     def _made(self, low, high, default, choices, value):
         if isinstance(value, str):
-            self._cells = _steps_from(value)
+            self._cells = _steps_from(value, self._marks)
 
     def _told(self, text):
-        self._cells = _steps_from(text)
+        self._cells = _steps_from(text, self._marks)
         self._out_to_target()
         if self.on_change:
             self.on_change(self.value)
@@ -2170,8 +2174,8 @@ class Steps(_Bound):
         if self._target is None:
             return
         there = _read(self._target, self._param)
-        if there not in (None, "") and _steps_text(_steps_from(_named(there, self._presets))) != self.text:
-            self._cells = _steps_from(_named(there, self._presets))
+        if there not in (None, "") and _steps_text(_steps_from(_named(there, self._presets), self._marks), self._marks) != self.text:
+            self._cells = _steps_from(_named(there, self._presets), self._marks)
             self._set("value", self.text)
 
     def __iter__(self):
@@ -2186,6 +2190,7 @@ class GatePattern(Steps):
     kind = "gatePattern"
     _names = ("gatePattern", "gate_pattern", "pattern")
     _presets = GATE_NAMED
+    _marks = GATE_MARKS
     _plated = True
 
 
