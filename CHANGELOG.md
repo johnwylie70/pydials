@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fixed: a select or rotary did not follow a choice changed in code when its target reads the choice back by name (`lead.wave = "sine"`). It now takes a place in the list, a name in any case, or `false` and `true` for two choices, and says nothing back to the target.
 - The keyboard keeps its height: when everything does not fit, the scope is made shorter and then the plates are moved, under a scope and a keyboard that stay put. `keyboard(lead, height=200)` is kept to.
 - A dial turned by ratio may start at 0 (`{"min": 0, "log": True}` from a target's `describe`), and `labels={0: "auto"}` shows a name in place of a value.
 - A rotary with its names round it no longer names its choice a second time underneath (`show_value=True` or `False` says otherwise), and its title and knob are on a line with the dials beside it.

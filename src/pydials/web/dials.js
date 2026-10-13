@@ -531,8 +531,26 @@ class Select extends Control {
       now ??= there ?? d.default
     }
     this.choices = [...(spec.choices || d.choices || [])]
-    this.i = Math.max(0, this.out && typeof now === 'number' ? clamp(Math.round(now), 0, this.choices.length - 1) : this.choices.indexOf(now))
+    this.aliases = d.aliases || null
+    this.i = Math.max(0, this.placeOf(now))
     this.default = this.i
+  }
+  /**
+   * Which of the choices a target means, however it says it: by its place in the list, by its name (in any
+   * case, or by another name the target says it answers to: `describe().aliases`, { sawtooth: "saw" }), or,
+   * of two choices, by false and true. -1 if it is none of them.
+   */
+  placeOf(said) {
+    const n = this.choices.length
+    if (typeof said === 'boolean') return n === 2 ? Number(said) : -1
+    if (typeof said === 'number' && !this.choices.includes(said)) return Number.isFinite(said) && Math.round(said) >= 0 && Math.round(said) < n ? Math.round(said) : -1
+    let i = this.choices.indexOf(said)
+    if (i < 0 && typeof said === 'string') {
+      const low = said.toLowerCase()
+      i = this.choices.findIndex((choice) => String(choice).toLowerCase() === low)
+      if (i < 0 && this.aliases) for (const other in this.aliases) if (other.toLowerCase() === low) i = this.choices.indexOf(this.aliases[other])
+    }
+    return i
   }
   /**
    * The target says its choices are not what they were (a device was plugged in, or taken out): they are
@@ -542,11 +560,9 @@ class Select extends Control {
   refresh() {
     const d = describe(this.target, this.param), was = this.value
     if (d.choices) this.choices = [...d.choices]
+    this.aliases = d.aliases || null
     let i = this.choices.indexOf(was)
-    if (i < 0) {
-      const there = readTarget(this.target, this.param)
-      i = this.out && typeof there === 'number' ? clamp(Math.round(there), 0, this.choices.length - 1) : this.choices.indexOf(there)
-    }
+    if (i < 0) i = this.placeOf(readTarget(this.target, this.param))
     this.i = Math.max(0, i)
   }
   get value() { return this.choices[this.i] }
@@ -579,9 +595,9 @@ class Select extends Control {
   }
   frame() {
     if (!this.target) return
-    const there = readTarget(this.target, this.param)
-    const i = this.out ? there : this.choices.indexOf(there)
-    if (typeof i === 'number' && i >= 0 && i < this.choices.length && i !== this.i) { this.i = i; this.touch() }
+    // Changed some other way (the scene's code, a song): the control follows, and says nothing back to the target.
+    const i = this.placeOf(readTarget(this.target, this.param))
+    if (i >= 0 && i !== this.i) { this.i = i; this.touch() }
   }
   draw(g, u) {
     const cx = this.x + this.w / 2, cy = this.y + 40 * u

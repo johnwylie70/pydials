@@ -397,6 +397,33 @@ def test_a_value_with_a_name_and_a_dial_turned_by_ratio_from_nothing_are_said_to
     assert second["labels"] == {"$d": {"10": "full"}} and second["logFrom"] == 0.1
 
 
+def test_a_select_and_a_rotary_follow_a_python_target_that_reads_its_choice_back_by_name():
+    r = start("""
+        from pydials import *
+        class Synth:
+            def __init__(self): self.wave = "saw"; self.sets = []
+            def describe(self, name): return {"kind": "choice", "choices": "sine|saw|square"}
+            def get(self, name): return self.wave
+            def set(self, name, value): self.sets.append(value)
+        lead = Synth()
+        a = select("wave", lead, "wave")
+        b = rotary("wave", lead, "wave")
+        frames = 0
+        def update(dt):
+            global frames
+            frames += 1
+            if frames == 2: lead.wave = "SQUARE"        # by name, in another case
+            if frames == 4: lead.wave = 0               # by its place in the list
+            print(a.value, b.index, lead.sets)
+    """)
+    assert r["error"] is None and out(r) == ["saw", "1", "[]"]
+    tick()
+    r = tick({"b": 1})
+    assert sorted(sent(r, "set")) == [[1, "index", 2], [2, "index", 2]] and out(r) == ["square", "2", "[]"]
+    tick()
+    assert out(tick({"b": 1})) == ["sine", "0", "[]"]
+
+
 def test_each_run_starts_with_no_controls_and_a_page_of_its_own():
     first = start("from pydials import *\ndial('a', 0, 1)\ndial('b', 0, 1)")
     second = start("from pydials import *\ndial('c', 0, 1)")

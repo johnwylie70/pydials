@@ -611,10 +611,21 @@ class Select(_Bound):
     def _frame(self):
         if self._target is None:
             return
+        # Changed some other way: by its place in the list, by its name in any case, or (of two) as False and True.
         there = _read(self._target, self._param)
-        i = there if self._out else (self.choices.index(there) if there in self.choices else None)
-        if _is_number(i) and 0 <= i < len(self.choices) and i != self._i:
-            self._i = int(i)
+        if isinstance(there, bool):
+            i = int(there) if len(self.choices) == 2 else None
+        elif there in self.choices:
+            i = self.choices.index(there)
+        elif _is_number(there):
+            i = int(round(there))
+        elif isinstance(there, str):
+            low = [str(choice).lower() for choice in self.choices]
+            i = low.index(there.lower()) if there.lower() in low else None
+        else:
+            i = None
+        if i is not None and 0 <= i < len(self.choices) and i != self._i:
+            self._i = i
             self._set("index", self._i)
 
     def __eq__(self, other):
