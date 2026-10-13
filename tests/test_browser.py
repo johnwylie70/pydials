@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from conftest import EXAMPLES, SHOTS
+from conftest import EXAMPLES, ROOT, SHOTS
 
 playwright = pytest.importorskip("playwright.sync_api")
 
@@ -25,7 +25,7 @@ SPOT = """([i, fx, fy]) => {
 @pytest.fixture(scope="module")
 def browser():
     with playwright.sync_playwright() as p:
-        b = p.chromium.launch()
+        b = p.chromium.launch(args=["--mute-audio"])       # the examples make sound: none of it is heard
         yield b
         b.close()
 
@@ -33,11 +33,13 @@ def browser():
 class Watched:
     """A page showing one scene, with its errors collected."""
 
-    def __init__(self, browser, url, size=(900, 700)):
-        self.page = browser.new_page(viewport={"width": size[0], "height": size[1]})
+    def __init__(self, browser, url, size=(900, 700), touch=False):
+        self.page = browser.new_page(viewport={"width": size[0], "height": size[1]}, has_touch=touch, is_mobile=touch)
         self.errors = []
         self.page.on("console", lambda m: self.errors.append(m.text) if m.type == "error" else None)
         self.page.on("pageerror", lambda e: self.errors.append(str(e)))
+        # A Pyctures that has the dials built in serves a copy of its own: these tests are of the page's half that is here.
+        self.page.route("**/dials/dials.js", lambda route: route.fulfill(path=str(ROOT / "src" / "pydials" / "web" / "dials.js"), content_type="text/javascript"))
         self.page.goto(url)
 
     def wait(self, what, timeout=20):
@@ -53,7 +55,7 @@ class Watched:
 
     def ready(self, count=1):
         """The controls are made and laid out."""
-        self.wait("%s.items.length >= %d && %s.items.every((c) => c.w > 0 || c.kind === 'row')" % (PANEL, count, PANEL))
+        self.wait("%s.items.length >= %d && %s.items.every((c) => c.w > 0 || c.kind === 'row' || c.hidden || c.ghost)" % (PANEL, count, PANEL))
 
     def spot(self, i, fx=0.5, fy=0.5):
         return self.page.evaluate(SPOT, [i, fx, fy])
@@ -241,11 +243,154 @@ def update(dt):
   const ring = [...layer.getImageData(Math.round((d.x + d.w / 2 - 18) * p.ratio), Math.round((d.y + d.h / 2 + 12) * p.ratio), 3, 3).data]
   return {
     kinds: p.items.map((c) => c.kind).join(), dial: d.value, wave: by('select').value, toggle: [by('toggle').x, by('toggle').y],
-    rows: by('select').y > d.y, low: d.y > p.H / 3, sameRow: by('label').y < d.y + d.h && by('label').x < d.x,
+    rows: by('select').y > d.y, low: d.y > p.H / 3, heading: by('label').heading && by('label').y + by('label').h <= d.y && by('label').box === d.box,
     octave: by('keyboard').octave, held: by('keyboard').notes, red: ring.some((v, i) => i %% 4 === 0 && v > 200 && ring[i + 1] < 80),
   }
 })()""" % PANEL)
     assert got == {"kinds": "label,dial,row,select,toggle,keyboard", "dial": 7, "wave": "square", "toggle": [60, 50],
-                   "rows": True, "low": True, "sameRow": True, "octave": 2, "held": [40], "red": True}
+                   "rows": True, "low": True, "heading": True, "octave": 2, "held": [40], "red": True}
+    w.clean()
+    w.page.close()
+
+
+# The plates as they stand: their titles line by line down the picture, and anything wrong with a heading
+# (not on its controls' plate, or not above them all) or with where a control is (outside the picture, or over another).
+PLATES = """(() => {
+  const p = %s, wrong = []
+  const shown = (c) => !c.items && !c.ghost && !c.hidden && c.w > 0
+  const inside = (box) => box.items.flatMap((kid) => (kid.items ? inside(kid) : shown(kid) ? [kid] : []))
+  const lines = []
+  for (const box of p.boxes.filter((b) => b.w > 0 && b.kind !== 'page' && p.plated(b)).sort((a, b) => a.y - b.y || a.x - b.x)) {
+    const head = box.heading && box.heading.heading ? box.heading : null, title = head ? head.label : box.label
+    if (!title) continue
+    const at = head ? head.y + head.h / 2 : (p.titles.find((t) => t.text === title && t.x >= box.x && t.x <= box.x + box.w && t.y >= box.y && t.y <= box.y + box.h) || {}).y
+    if (at === undefined || at < box.y || at > box.y + box.h) wrong.push(title + ' has no title on its plate')
+    for (const c of inside(box)) if (c.y < at || c.x < box.x - 1 || c.x + c.w > box.x + box.w + 1 || c.y + c.h > box.y + box.h + 1) wrong.push(title + ' does not hold ' + c.label)
+    const line = lines.find((l) => Math.abs(l.y - box.y) < 1)
+    line ? line.titles.push(title) : lines.push({ y: box.y, titles: [title] })
+  }
+  const all = p.items.filter(shown)
+  for (const c of all) if (c.x < 0 || c.y < 0 || c.x + c.w > p.W + 0.5 || (!c.view && c.y + c.h > p.H + 0.5)) wrong.push(c.label + ' is outside the picture')
+  for (const a of all) for (const b of all) if (a.id < b.id && a.x < b.x + b.w - 0.5 && b.x < a.x + a.w - 0.5 && a.y < b.y + b.h - 0.5 && b.y < a.y + a.h - 0.5) wrong.push(a.label + ' is over ' + b.label)
+  return { lines: lines.map((l) => l.titles), wrong, free: p.free.map(Math.round), tabs: p.tabs.map((t) => t.page.label), moved: !!p.viewport }
+})()""" % PANEL
+
+# A synth in the page with the settings of the scene in the owner's picture, that makes no sound.
+LEAD = """
+from pyctures import *
+from pydials import *
+
+lead = js.Function('''const P = { wave: { kind: "choice", choices: "sine|saw|pulse", default: 2 }, filter: { kind: "choice", choices: "lowpass|highpass", default: 0 },
+  cutoff: { min: 20, max: 20000, default: 2800, unit: "Hz" }, "lfo2.rate": { min: 0.01, max: 20, default: 0.5, unit: "Hz" }, voices: { min: 1, max: 8, default: 1, kind: "int" } }
+const values = {}
+return { describe: (n) => P[n] || { min: 0, max: 1, default: 0.5 }, get: (n) => values[n] ?? (P[n] || { default: 0.5 }).default, set: (n, v) => { values[n] = v },
+  noteOn() {}, noteOff() {}, samples: () => new Float32Array(64) }''')()
+"""
+
+
+def test_the_scene_in_the_owners_picture_is_grouped_plates_with_no_heading_stranded(browser, pyctures_run, tmp_path):
+    # Line for line what was on the owner's screen: labels, controls and row(), with nothing said of layout.
+    w = Watched(browser, pyctures_run(scene_file(tmp_path, LEAD + """
+label("oscillator")
+select("wave", lead, "wave")
+dial("width", lead, "width")
+dial("pwm", lead, "lfo2.pulse_width")
+dial("pwm speed", lead, "lfo2.rate")
+dial("sub", lead, "sub")
+
+row()
+label("unison")
+dial("voices", lead, "voices")
+dial("detune", lead, "detune")
+dial("spread", lead, "spread")
+label("filter")
+select("filter", lead, "filter")
+dial("cutoff", lead, "cutoff")
+dial("resonance", lead, "resonance")
+
+row()
+label("shape")
+slider("attack", lead, "attack")
+slider("decay", lead, "decay")
+slider("sustain", lead, "sustain")
+slider("release", lead, "release")
+
+row()
+label("delay")
+dial("delay", lead, "echo")
+dial("time", lead, "delay.time")
+dial("feedback", lead, "delay.feedback")
+label("reverb")
+dial("reverb", lead, "reverb")
+dial("size", lead, "reverb.size")
+dial("chorus", lead, "chorus")
+scope(lead)
+
+keyboard(lead, octave=3, octaves=2)
+""")).url, size=(560, 1100), touch=True)
+    w.ready(30)
+    w.page.wait_for_timeout(300)
+    got = w.page.evaluate(PLATES)
+    assert got["wrong"] == []
+    assert got["lines"] == [["oscillator"], ["unison", "filter"], ["shape"], ["delay", "reverb"]]
+    SHOTS.mkdir(exist_ok=True)
+    w.page.screenshot(path=str(SHOTS / "owner_split.png"))
+    w.clean()
+    w.page.close()
+
+
+def test_with_group_the_straight_line_form_pages_and_room_lay_out_in_the_page(browser, pyctures_run, tmp_path):
+    w = Watched(browser, pyctures_run(scene_file(tmp_path, LEAD + """
+with group("moves", at="left"):
+    speed = dial("speed", 0, 100, 20)
+    jump = button("jump")
+page("osc")
+with group("oscillator", colour="deepskyblue"):
+    select("wave", lead, "wave")
+    with column():
+        dial("width", lead, "width", size="small")
+        dial("sub", lead, "sub", size="small")
+group("unison")
+dial("voices", lead, "voices")
+dial("detune", lead, "detune")
+with page("fx") as fx:
+    with grid(2, "delay"):
+        dial("time", lead, "delay.time")
+        dial("feedback", lead, "delay.feedback")
+        slider("mix", lead, "echo", span=2)
+page()
+graph = scope("speed")
+
+def update(dt):
+    graph.push(speed.value)
+    js.result = [list(room()), speed.value]
+
+def on_key_down(key):
+    if key == "f":
+        fx.show()
+""")).url, size=(900, 700))
+    w.ready(8)
+    w.wait("window.result && window.result[0][0] > 0")
+    got = w.page.evaluate(PLATES)
+    assert got["wrong"] == []
+    assert got["tabs"] == ["osc", "fx"]
+    assert got["lines"] == [["moves"], ["oscillator", "unison"]]      # the strip from the top; the page's plates under the tabs
+    # Python is told the rectangle the page worked out: to the right of the strip, below the pages.
+    assert w.page.evaluate("window.result[0]") == got["free"] and got["free"][0] > 80 and got["free"][0] + got["free"][2] == 900
+    # A dial inside a group is still a number in Python.
+    w.drag(0, 0, -45)
+    w.wait("window.result[1] === 45")
+    # Turned from Python, the other page is on show, and its grid is there.
+    w.page.locator("[data-pyctures-src] canvas[tabindex]").first.focus()
+    w.page.keyboard.press("f")
+    w.wait("%s.shown.label === 'fx'" % PANEL)
+    w.page.wait_for_timeout(200)
+    turned = w.page.evaluate(PLATES)
+    assert turned["wrong"] == [] and turned["lines"] == [["moves"], ["delay"]]
+    cells = w.page.evaluate("%s.items.filter((c) => c.w > 0 && ['time', 'feedback', 'mix'].includes(c.label)).map((c) => [c.label, Math.round(c.x), Math.round(c.y), Math.round(c.w)])" % PANEL)
+    (_, tx, ty, tw), (_, fx_, fy, _), (_, mx, my, mw) = cells
+    assert ty == fy and fx_ > tx and my > ty and mw > tw * 1.5
+    SHOTS.mkdir(exist_ok=True)
+    w.page.screenshot(path=str(SHOTS / "groups_pages.png"))
     w.clean()
     w.page.close()

@@ -8,6 +8,15 @@
     keyboard(lead, octave=4)                # piano keys: fingers, the mouse, the computer's keys
     scope(lead)                             # the wave `lead` is making, live
 
+    with group("filter"):                   # a titled plate that keeps its controls together
+        dial("cutoff", lead, "cutoff")
+        dial("resonance", lead, "resonance")
+
+NOTHING IS POSITIONED BY HAND unless you want it. Controls line up in the order
+they are made, on plates that share a width, and what does not fit can be moved
+with a finger. ``group``, ``row``, ``column``, ``grid`` and ``page`` say what goes
+with what; the page decides where each thing is, so Python is asked nothing.
+
 THE PAGE DRAWS THE CONTROLS AND FEELS THE FINGERS. Python never touches the
 page (it may be in a worker, or on another computer), so a dial that Python
 drew and turned would lag behind the finger. Here each function sends ONE
@@ -41,7 +50,7 @@ import sys
 __version__ = "0.0.0"
 
 __all__ = ["dial", "slider", "button", "toggle", "select", "keyboard", "scope", "meter",
-           "label", "row", "layout", "theme"]
+           "label", "group", "row", "column", "grid", "page", "spacer", "layout", "room", "theme"]
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _source = [None]
@@ -68,6 +77,7 @@ class _Run:
         self.items = {}
         self.next_id = 1
         self.beating = False
+        self.room = None        # the rectangle no control is on, as the page last told it
 
 
 _run = _Run()
@@ -124,6 +134,8 @@ def _heard(e):
         item = items.get(played[i])
         if item is not None:
             item._played(played[i + 1], played[i + 2])
+    if e.get("f"):
+        _run.room = list(e["f"])
     if e.get("b"):
         for item in list(items.values()):
             item._frame()
@@ -744,6 +756,70 @@ class Label(Control):
         self._set("value", self.label)
 
 
+class Box:
+    """A group, row, column, grid or page. Used with `with`, what is made inside is in it:
+
+        with group("filter"):
+            dial("cutoff", lead, "cutoff")
+
+    Used alone (`group("filter")`), what is made next is in it, until the next group, row or page.
+    """
+
+    def __init__(self, kind, spec):
+        api = _page()
+        self.kind = kind
+        self._id = _run.next_id
+        _run.next_id += 1
+        self.label = spec.get("label") or ""
+        api.make(kind, self._id, spec)
+
+    def __enter__(self):
+        _page().call(self._id, "enter")
+        return self
+
+    def __exit__(self, *error):
+        _page().call(self._id, "leave")
+        return False
+
+    @property
+    def title(self):
+        return self.label
+
+    @title.setter
+    def title(self, text):
+        self.label = str(text)
+        _page().set(self._id, "label", self.label)
+
+    def show(self):
+        """Turn to this page."""
+        _page().call(self._id, "show")
+
+    def remove(self):
+        """Take it, and everything in it, off the scene."""
+        _page().drop(self._id)
+
+    def __repr__(self):
+        return "<%s %s>" % (self.kind, self.label)
+
+
+class Room:
+    """A rectangle: x, y, width and height, and its left, top, right and bottom edges."""
+
+    def __init__(self, x, y, width, height):
+        self.x, self.y, self.width, self.height = x, y, width, height
+
+    left = property(lambda self: self.x)
+    top = property(lambda self: self.y)
+    right = property(lambda self: self.x + self.width)
+    bottom = property(lambda self: self.y + self.height)
+
+    def __iter__(self):
+        return iter((self.x, self.y, self.width, self.height))
+
+    def __repr__(self):
+        return "Room(x=%r, y=%r, width=%r, height=%r)" % tuple(self)
+
+
 # ---------------------------------------------------------------- what a scene calls
 
 def _options(**given):
@@ -755,40 +831,56 @@ def _options(**given):
 
 
 def dial(label=None, a=None, b=None, c=None, *, min=None, max=None, value=None, step=None, unit=None, log=None,
-         digits=None, default=None, x=None, y=None, size=None, colour=None, color=None, on_change=None):
-    """A dial: dial("speed", 0, 10), dial("speed", 0, 10, 5) or dial("cutoff", lead, "filter_cutoff")."""
+         digits=None, default=None, x=None, y=None, size=None, share=None, span=None, colour=None, color=None,
+         on_change=None):
+    """A dial: dial("speed", 0, 10), dial("speed", 0, 10, 5) or dial("cutoff", lead, "filter_cutoff").
+
+    size="small" or "large" (or how many points across); in a grid, span=2 covers two columns."""
     return Dial(label, a, b, c, _options(min=min, max=max, value=value, step=step, unit=unit, log=log, digits=digits,
-                                         default=default, x=x, y=y, size=size, colour=colour, color=color, on_change=on_change))
+                                         default=default, x=x, y=y, size=size, share=share, span=span, colour=colour,
+                                         color=color, on_change=on_change))
 
 
 def slider(label=None, a=None, b=None, c=None, *, min=None, max=None, value=None, step=None, unit=None, log=None,
-           digits=None, default=None, vertical=None, x=None, y=None, size=None, colour=None, color=None, on_change=None):
-    """A slider, across or (vertical=True) upright: slider("volume", 0, 1) or slider("attack", lead, "attack")."""
+           digits=None, default=None, vertical=None, x=None, y=None, size=None, share=None, span=None, colour=None,
+           color=None, on_change=None):
+    """A slider, across or (vertical=True) upright: slider("volume", 0, 1) or slider("attack", lead, "attack").
+
+    share=1 gives it the room left over on its line."""
     return Slider(label, a, b, c, _options(min=min, max=max, value=value, step=step, unit=unit, log=log, digits=digits,
-                                           default=default, vertical=vertical, x=x, y=y, size=size, colour=colour,
-                                           color=color, on_change=on_change))
+                                           default=default, vertical=vertical, x=x, y=y, size=size, share=share, span=span,
+                                           colour=colour, color=color, on_change=on_change))
 
 
-def button(label="", on_press=None, *, on_release=None, x=None, y=None, width=None, colour=None, color=None):
+def button(label="", on_press=None, *, on_release=None, x=None, y=None, width=None, size=None, share=None, span=None,
+           colour=None, color=None):
     """A button: `fire = button("fire")`, then `if fire.pressed:` in update(); or button("fire", shoot)."""
-    return Button(_options(label=label, on_press=on_press, on_release=on_release, x=x, y=y, width=width, colour=colour, color=color))
+    return Button(_options(label=label, on_press=on_press, on_release=on_release, x=x, y=y, width=width, size=size,
+                           share=share, span=span, colour=colour, color=color))
 
 
-def toggle(label="", a=None, b=None, *, value=None, x=None, y=None, colour=None, color=None, on_change=None):
+def toggle(label="", a=None, b=None, *, value=None, x=None, y=None, size=None, share=None, span=None, colour=None,
+           color=None, on_change=None):
     """A switch: `mute = toggle("mute")`, then `if mute:`; toggle("mute", True); toggle("sync", lead, "sync")."""
-    return Toggle(label, a, b, _options(value=value, x=x, y=y, colour=colour, color=color, on_change=on_change))
+    return Toggle(label, a, b, _options(value=value, x=x, y=y, size=size, share=share, span=span, colour=colour, color=color,
+                                        on_change=on_change))
 
 
-def select(label="", a=None, b=None, *, value=None, x=None, y=None, colour=None, color=None, on_change=None):
+def select(label="", a=None, b=None, *, value=None, x=None, y=None, size=None, share=None, span=None, colour=None,
+           color=None, on_change=None):
     """One of a list: select("wave", ["sine", "saw", "square"]), or select("wave", lead, "wave")."""
-    return Select(label, a, b, _options(value=value, x=x, y=y, colour=colour, color=color, on_change=on_change))
+    return Select(label, a, b, _options(value=value, x=x, y=y, size=size, share=share, span=span, colour=colour, color=color,
+                                        on_change=on_change))
 
 
 def keyboard(target=None, *, octave=None, octaves=None, keys=None, hints=None, x=None, y=None, width=None, height=None,
-             colour=None, color=None, on_note_on=None, on_note_off=None):
-    """A piano keyboard that plays `target`: keyboard(lead, octave=4). With no target, read `notes` or give on_note_on."""
+             share=None, span=None, colour=None, color=None, on_note_on=None, on_note_off=None):
+    """A piano keyboard that plays `target`: keyboard(lead, octave=4). With no target, read `notes` or give on_note_on.
+
+    Made outside any group it lies along the bottom; made in one, it is where the group puts it."""
     return Keyboard(target, _options(octave=octave, octaves=octaves, keys=keys, hints=hints, x=x, y=y, width=width,
-                                     height=height, colour=colour, color=color, on_note_on=on_note_on, on_note_off=on_note_off))
+                                     height=height, share=share, span=span, colour=colour, color=color,
+                                     on_note_on=on_note_on, on_note_off=on_note_off))
 
 
 def _labelled(label, source):
@@ -798,32 +890,107 @@ def _labelled(label, source):
 
 
 def scope(label=None, source=None, *, points=None, min=None, max=None, steady=None, x=None, y=None, width=None,
-          height=None, colour=None, color=None):
-    """A scope: scope(lead) draws its wave; `graph = scope("height")` then graph.push(value) draws a value over time."""
+          height=None, share=None, span=None, colour=None, color=None):
+    """A scope: scope(lead) draws its wave; `graph = scope("height")` then graph.push(value) draws a value over time.
+
+    Made outside any group it is as wide as the picture; in a group, share=1 gives it the room left over."""
     label, source = _labelled(label, source)
     return Scope(source, _options(label=label, points=points, min=min, max=max, steady=steady, x=x, y=y, width=width,
-                                  height=height, colour=colour, color=color))
+                                  height=height, share=share, span=span, colour=colour, color=color))
 
 
-def meter(label=None, source=None, *, vertical=None, x=None, y=None, size=None, colour=None, color=None):
+def meter(label=None, source=None, *, vertical=None, x=None, y=None, size=None, share=None, span=None, colour=None,
+          color=None):
     """A level meter: meter(lead), or `level = meter("level")` then level.value = 0.7."""
     label, source = _labelled(label, source)
-    return Meter(source, _options(label=label, vertical=vertical, x=x, y=y, size=size, colour=colour, color=color))
+    return Meter(source, _options(label=label, vertical=vertical, x=x, y=y, size=size, share=share, span=span,
+                                  colour=colour, color=color))
 
 
-def label(text, *, x=None, y=None, colour=None, color=None):
-    """Words in the row: a heading for the controls after it."""
-    return Label(_options(label=str(text), x=x, y=y, colour=colour, color=color))
+def label(text, *, x=None, y=None, span=None, colour=None, color=None):
+    """Words. Made just before some controls and outside any group, it is their heading: the title of their plate."""
+    return Label(_options(label=str(text), x=x, y=y, span=span, colour=colour, color=color))
 
 
-def row():
-    """The controls made after this start a new row."""
-    _page().row()
+def _box(kind, title, **options):
+    spec = _options(**options)
+    if title is not None:
+        spec["label"] = str(title)
+    return Box(kind, spec)
+
+
+def group(title=None, *, columns=None, at=None, share=None, span=None, x=None, y=None, width=None, height=None,
+          plate=None, dividers=None, gap=None, align=None, colour=None, color=None):
+    """A titled plate that keeps its controls together.
+
+        with group("filter"):                 # what is made inside is in the group
+            dial("cutoff", lead, "cutoff")
+
+        group("filter")                       # or in a straight line: what is made next is in it,
+        dial("cutoff", lead, "cutoff")        # until the next group, row or page
+
+    columns=3 lines them up three to a line; at="left" (or "right", "top", "bottom") makes it a strip along
+    that edge; share=2 gives it twice its neighbour's part of the line; colour= is the colour of its controls."""
+    return _box("group", title, columns=columns, at=at, share=share, span=span, x=x, y=y, width=width, height=height,
+                plate=plate, dividers=dividers, gap=gap, align=align, colour=colour, color=color)
+
+
+def row(title=None, *, share=None, span=None, plate=None, dividers=None, gap=None, align=None, colour=None, color=None):
+    """`with row():` what is made inside stands in a line. `row()` alone: the controls made after this start a new line."""
+    return _box("row", title, share=share, span=span, plate=plate, dividers=dividers, gap=gap, align=align,
+                colour=colour, color=color)
+
+
+def column(title=None, *, share=None, span=None, plate=None, dividers=None, gap=None, align=None, colour=None, color=None):
+    """`with column():` what is made inside stands one under another."""
+    return _box("column", title, share=share, span=span, plate=plate, dividers=dividers, gap=gap, align=align,
+                colour=colour, color=color)
+
+
+def grid(columns=None, title=None, *, share=None, span=None, plate=None, dividers=None, gap=None, align=None,
+         colour=None, color=None):
+    """`with grid(3):` what is made inside is three to a line, in columns that line up (fewer where three will not fit)."""
+    if isinstance(columns, str):
+        columns, title = (title if _is_number(title) else None), columns
+    return _box("grid", title, columns=columns, share=share, span=span, plate=plate, dividers=dividers, gap=gap,
+                align=align, colour=colour, color=color)
+
+
+def page(name=None, *, colour=None, color=None):
+    """A page of plates, turned to with a tab: `with page("fx"):`, or page("fx") and then its controls.
+
+    What is made before the first page is above the tabs on every page. page() alone ends the pages: what is
+    made next is below them on every page."""
+    return _box("page", name, colour=colour, color=color)
+
+
+def spacer(size=None, *, share=None):
+    """Room between controls: spacer(20) is that many points, spacer() all the room that is left over."""
+    api = _page()
+    _run.next_id += 1
+    api.make("spacer", _run.next_id - 1, _options(size=size, share=share))
 
 
 def layout(**options):
-    """How the rows are laid out: layout(at="bottom"), layout(scale=1.2), layout(backdrop="navy")."""
+    """How it is all laid out.
+
+    layout(at="bottom") (or "top", "left", "right"), scale=1.2, margin=10, compact=True, dividers=True,
+    plates=False, align="center", backdrop="navy", image="panel.png" (a picture behind the controls), and
+    design=(800, 480): the size that x= and y= are measured in, which is then scaled to the picture."""
+    if isinstance(options.get("design"), tuple):
+        options["design"] = list(options["design"])
     _page().layout(options)
+
+
+def room():
+    """The rectangle of the picture that no control is on, for the scene to draw in: its x, y, width and height.
+
+    The page works it out and says so with a frame, so in the scene's first lines it is still the whole picture."""
+    _page()
+    if _run.room:
+        return Room(*_run.room)
+    size = getattr(_pyctures(), "_scene_size", None)
+    return Room(0, 0, *(size() if size else (0, 0)))
 
 
 def theme(**colours):

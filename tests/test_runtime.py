@@ -225,6 +225,101 @@ def test_a_scope_and_a_meter_fed_from_python_send_a_short_line_each_frame_the_pa
     assert [c for c in sent(tick(), "call") if c[1] == "feed"] == []
 
 
+def boxes(reply):
+    """What a frame did to the layout, in order: a control or box made (its kind), and a box gone into or left (enter, leave)."""
+    said = []
+    for c in reply["cmds"]:
+        if c[0] != "call":
+            continue
+        if c[4] == "make":
+            spec = c[5][2]["$d"]
+            said.append("%s %s" % (c[5][0], spec.get("label", "")) if c[5][0] in ("group", "row", "column", "grid", "page") else c[5][0])
+        elif c[4] == "call" and c[5][1] in ("enter", "leave"):
+            said.append("%s %d" % (c[5][1], c[5][0]))
+    return said
+
+
+def test_with_group_says_where_the_group_begins_and_ends_and_what_is_made_between_is_in_it():
+    r = start("""
+        from pydials import *
+        with group("filter", colour="deepskyblue") as g:
+            dial("cutoff", 20, 20000)
+            with column():
+                toggle("drive")
+                with grid(2):
+                    dial("a", 0, 1, size="small", span=2)
+        dial("outside", 0, 1)
+        print(g.title, g)
+    """)
+    assert r["error"] is None
+    # Each box has a number like a control's, and the page is told when it is gone into and left: nothing is asked of it.
+    assert boxes(r) == ["group filter", "enter 1", "dial", "column ", "enter 3", "toggle", "grid ", "enter 5", "dial", "leave 5",
+                        "leave 3", "leave 1", "dial"]
+    by_kind = {m[0]: m[2] for m in made(r)}
+    assert by_kind["group"] == {"colour": "deepskyblue", "label": "filter"}
+    assert by_kind["grid"] == {"columns": 2}
+    assert [m[2] for m in made(r) if m[0] == "dial"][1]["size"] == "small" and [m[2] for m in made(r) if m[0] == "dial"][1]["span"] == 2
+    assert out(r) == ["filter", "<group", "filter>"]
+    assert not [c for c in r["cmds"] if c[0] == "read"]
+
+
+def test_a_group_left_by_a_mistake_is_still_left():
+    r = start("""
+        from pydials import *
+        try:
+            with group("a"):
+                dial("x", 0, 1)
+                raise ValueError("oops")
+        except ValueError:
+            pass
+        dial("y", 0, 1)
+    """)
+    assert r["error"] is None
+    assert boxes(r) == ["group a", "enter 1", "dial", "leave 1", "dial"]
+
+
+def test_groups_rows_and_pages_in_a_straight_line_are_one_command_each():
+    r = start("""
+        from pydials import *
+        label("oscillator")
+        dial("width", 0, 1)
+        row()
+        page("fx")
+        group("delay", columns=3)
+        dial("time", 0, 1)
+        spacer()
+        spacer(12)
+        grid("lfo", 2)
+        dial("rate", 0, 1)
+        page()
+        layout(design=(800, 480), compact=True)
+        dial("placed", 0, 1, x=40, y=60, share=2)
+    """)
+    assert r["error"] is None
+    assert boxes(r) == ["label", "dial", "row ", "page fx", "group delay", "dial", "spacer", "spacer", "grid lfo", "dial", "page ", "dial"]
+    specs = [m[2] for m in made(r)]
+    assert specs[4] == {"columns": 3, "label": "delay"} and specs[6] == {} and specs[7] == {"size": 12} and specs[8] == {"columns": 2, "label": "lfo"}
+    assert specs[-1]["x"] == 40 and specs[-1]["share"] == 2
+    assert sent(r, "layout") == [[{"$d": {"design": [800, 480], "compact": True}}]]
+    # No box was gone into: each lasts until the next.
+    assert not [c for c in sent(r, "call") if c[1] in ("enter", "leave")]
+
+
+def test_room_is_the_whole_picture_until_the_page_says_what_the_controls_left():
+    start("""
+        from pydials import *
+        with group("moves", at="left"):
+            dial("speed", 0, 10)
+        def update(dt):
+            r = room()
+            x, y, w, h = r
+            print(r.x, r.y, r.width, r.height, r.right, r.bottom, w)
+    """)
+    assert out(tick()) == ["0", "0", "400", "300", "400", "300", "400"]
+    assert out(tick({"f": [102, 0, 298, 300]})) == ["102", "0", "298", "300", "400", "300", "298"]
+    assert out(tick()) == ["102", "0", "298", "300", "400", "300", "298"]
+
+
 def test_each_run_starts_with_no_controls_and_a_page_of_its_own():
     first = start("from pydials import *\ndial('a', 0, 1)\ndial('b', 0, 1)")
     second = start("from pydials import *\ndial('c', 0, 1)")
