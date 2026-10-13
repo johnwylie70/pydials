@@ -378,6 +378,7 @@ class _Ranged(_Number, _Bound):
             spec["logFrom"] = d["log_from"]
         if spec.get("step") is None and d.get("kind") == "int":
             spec["step"] = 1
+        self._steps(spec)
         self.min = spec.get("min", 0) if spec.get("min") is not None else 0
         self.max = spec.get("max", 1) if spec.get("max") is not None else 1
         self.step = spec.get("step") or 0
@@ -403,6 +404,9 @@ class _Ranged(_Number, _Bound):
             if given:
                 self._send(self._v)
         Control.__init__(self, spec)
+
+    def _steps(self, spec):
+        """A kind that always moves in steps says here what its step is when it was told none."""
 
     def _clean(self, value):
         low, high = min(self.min, self.max), max(self.min, self.max)
@@ -1086,3 +1090,176 @@ def room():
 def theme(**colours):
     """Change the colours: theme(accent="deepskyblue")."""
     _page().theme(colours)
+
+
+# ================================================================ more controls
+# Each kind below is made in the page by one command, as the ones above are. They are in the order of
+# the README: for any program, for games, for music.
+
+__all__ += ["number", "stepper", "text_box", "readout"]
+
+
+class Number(_Ranged):
+    """A number with − and + at its sides, which can be typed."""
+    kind = "number"
+
+    def _steps(self, spec):
+        # Told no step, it counts in ones; a range too small for that, in tenths or hundredths. (Tied in the page, the page says.)
+        if spec.get("step") is None and "target" not in spec and spec.get("min") is not None and spec.get("max") is not None:
+            wide = abs(spec["max"] - spec["min"])
+            spec["step"] = 1 if wide >= 5 else 0.1 if wide >= 0.5 else 0.01
+
+
+class TextBox(_Bound):
+    """One line of text that is typed. `value` is the text."""
+    kind = "textBox"
+
+    def __init__(self, label, a, b, spec):
+        self.on_enter = spec.pop("on_enter", None)
+        spec["label"] = label
+        target = a if a is not None and not isinstance(a, (str, int, float)) and isinstance(b, str) else None
+        if target is None and a is not None:
+            spec.setdefault("value", str(a))
+        self._tie(spec, target, b if target is not None else None)
+        now = spec.get("value")
+        if now is None and self._target is not None:
+            now = _read(self._target, self._param)
+        self._v = "" if now is None else str(now)
+        if "target" not in spec:
+            spec["value"] = self._v
+        Control.__init__(self, spec)
+
+    @property
+    def value(self):
+        return self._v
+
+    @value.setter
+    def value(self, text):
+        text = str(text)
+        if text == self._v:
+            return
+        self._v = text
+        self._set("value", text)
+        self._send(text)
+
+    def _made(self, low, high, default, choices, value):
+        self._v = "" if value is None else str(value)
+
+    def _told(self, value):
+        # Enter is told with the text in a list of its own.
+        if isinstance(value, (list, tuple)):
+            if self.on_enter:
+                self.on_enter(self._v)
+            return
+        self._v = str(value)
+        self._send(self._v)
+        if self.on_change:
+            self.on_change(self._v)
+
+    def _frame(self):
+        if self._target is None:
+            return
+        there = _read(self._target, self._param)
+        if there is not None and str(there) != self._v:
+            self._v = str(there)
+            self._set("value", self._v)
+
+    def __str__(self):
+        return self._v
+
+    def __eq__(self, other):
+        return self._v == (other.value if isinstance(other, TextBox) else other)
+
+    __hash__ = object.__hash__
+
+    def __len__(self):
+        return len(self._v)
+
+
+class Readout(Control):
+    """A value or a message shown: it takes no hand. `value` is what it shows."""
+    kind = "readout"
+
+    def __init__(self, source, param, spec):
+        self._pull = None
+        self._format = spec.pop("format", None)
+        if callable(self._format):
+            self._show = self._format            # Python makes the words, and the page shows them
+        else:
+            self._show = None
+            if self._format is not None:
+                spec["format"] = self._format
+        page = _in_page(source) if isinstance(param, str) else None
+        if page is not None:
+            spec["target"], spec["param"] = page, param
+        elif callable(source):
+            self._pull = source
+        elif source is not None and isinstance(param, str):
+            self._pull = lambda: _read(source, param)
+            d = _describe(source, param)
+            for key in ("unit", "digits"):
+                if spec.get(key) is None and d.get(key) is not None:
+                    spec[key] = d[key]
+            if not spec.get("label"):
+                spec["label"] = d.get("label") or d.get("name") or param
+        elif source is not None:
+            spec.setdefault("value", source)
+        self._v = self._pull() if self._pull else spec.get("value", "")
+        if self._pull:
+            _beat()
+        spec["value"] = self._sent = self._shown()
+        Control.__init__(self, spec)
+
+    def _shown(self):
+        v = _value_of(self._v)
+        return str(self._show(v)) if self._show else v
+
+    @property
+    def value(self):
+        return self._v
+
+    @value.setter
+    def value(self, value):
+        self._v = value
+        now = self._shown()
+        if now != self._sent:
+            self._sent = now
+            self._set("value", now)
+
+    def _frame(self):
+        if self._pull:
+            self.value = self._pull()
+
+
+def number(label=None, a=None, b=None, c=None, *, min=None, max=None, value=None, step=None, unit=None, digits=None,
+           default=None, x=None, y=None, share=None, span=None, colour=None, color=None, on_change=None):
+    """A number with − and + at its sides: number("lives", 0, 9, 3), or number("voices", lead, "voices").
+
+    Tap − or + to step and hold one to keep stepping, drag up or down on the number, or tap it and type.
+    It counts in ones unless step= says otherwise (a small range counts in tenths). `lives.value`, or `lives * 2`."""
+    return Number(label, a, b, c, _options(min=min, max=max, value=value, step=step, unit=unit, digits=digits, default=default,
+                                           x=x, y=y, share=share, span=span, colour=colour, color=color, on_change=on_change))
+
+
+stepper = number
+
+
+def text_box(label="", a=None, b=None, *, value=None, placeholder=None, max=None, width=None, x=None, y=None, share=None,
+             span=None, colour=None, color=None, on_change=None, on_enter=None):
+    """A line of text that is typed: `name = text_box("name", "Ada")`, then `name.value`.
+
+    text_box("name", player, "name") is that setting of `player`. placeholder= is shown while it is empty and
+    max= is the most letters it takes; on_change(text) is called as each letter is typed (a frame later) and
+    on_enter(text) when Enter is pressed."""
+    return TextBox(label, a, b, _options(value=value, placeholder=placeholder, max=max, width=width, x=x, y=y, share=share,
+                                         span=span, colour=colour, color=color, on_change=on_change, on_enter=on_enter))
+
+
+def readout(label="", source=None, setting=None, *, value=None, unit=None, digits=None, format=None, size=None, width=None,
+            x=None, y=None, share=None, span=None, colour=None, color=None):
+    """A value or a message shown: readout("score", lambda: score), or `score = readout("score")` and `score.value = 12`.
+
+    readout("cutoff", lead, "cutoff") shows a setting. size="large" is for a score; format="clock" shows seconds as
+    minutes and seconds, and format= may be a function that makes the words; unit= and digits= are for a number."""
+    return Readout(source, setting, _options(label=label, value=value, unit=unit, digits=digits, format=format, size=size,
+                                             width=width, x=x, y=y, share=share, span=span, colour=colour, color=color))

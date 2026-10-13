@@ -356,6 +356,35 @@ Every control has `value`, `remove()` and `place(x, y)`. `on_change(value)` is c
 
 ![Rotaries: a small one with its choice written under it, usual and large ones with the names round the knob, one with two choices, five, eight and twelve, and one beside dials](docs/images/rotary.png)
 
+## More controls
+
+These are made and laid out like the ones above, are numbers or words in your code in the same way, and take the same options. The page draws them and feels the fingers, typing included; Python has what changed with the next frame.
+
+### For any program
+
+![A number box with a minus and a plus, a text box holding a name, and three readouts: a score, a clock and a speed](docs/images/number-text-readout.png)
+
+```python
+lives = number("lives", 0, 9, 3)            # − and +, or tap the number and type
+name = text_box("name", "Ada")              # tap it and type
+score = 0
+readout("score", lambda: score, size="large")
+
+def draw():
+    background("midnightblue")
+    text(f"{name} has {lives} lives", 20, 120, "white", 20)
+```
+
+| | |
+|---|---|
+| `number(label, min, max, start)` | A number box. Tap − or + to step, hold one to keep stepping (faster and faster), drag up or down on the number, or tap the number and type it. It counts in ones (in tenths over a small range) unless `step` says otherwise. `number(label, target, "setting")` ties it to a setting. `stepper` is the same. |
+| `text_box(label, text)` | One line of text. Tap it and type: Enter keeps what you typed, Escape puts back what was there. `name.value` is the text. Options: `placeholder`, `max` (letters), `width`, `on_change(text)` (as each letter is typed; Python hears it a frame later), `on_enter(text)`. `text_box(label, target, "setting")` ties it to a setting. |
+| `readout(label, lambda: value)` | Shows a value or a message, and takes no hand. Give it a function (asked every frame), a target and a setting, or nothing: then `score.value = 12` says what it shows. Options: `unit`, `digits`, `size=` (`"large"` for a score), `format="clock"` (65 is 1:05) or a function that makes the words. |
+
+**Typing.** A canvas cannot be typed into, so while you type a real box for text lies over the control: your device's own keyboard, caret, selection and paste all work. On a phone or tablet the keyboard comes up when your finger lifts, and a number asks for the number keys. What you type goes to the box and not to the scene's `keys`. It works the same when the picture is drawn smaller or larger, when the page is scrolled, and when the scene is shut inside a frame (as a preview's is): nothing is asked of the page around it.
+
+**Keys.** The control you touched last takes the arrow keys: on a number box they step it (Shift ten at a time, Home and End go to the ends, Enter types). Tab goes to the next control that takes keys.
+
 ## Targets
 
 A control can be tied to anything. No library is named: a target is known by what it can do, and every part is optional.
