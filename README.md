@@ -498,9 +498,17 @@ def update(dt):
 ![A gate's pattern as sixteen bars of different heights with its named patterns, depth, rate, smoothing and stereo beside it, and an arpeggio's pattern as a grid of notes with a tied note, and under it lanes of accents, slides, octaves and lengths](docs/images/gate-arp-patterns.png)
 
 ```python
-trance_gate("gate", pad)                               # pad's gate pattern, with its rate and depth beside it
-arp_pattern("arp", lead)                                # lead's arpeggio
-mine = trance_gate("chop", "x.x.x5x.X.3.xx..")         # or one of your own: mine.value, mine.text
+from synths import *
+
+set_tempo(138)
+pad, lead = make_synth("pad"), make_synth("lead")
+pad.trance_gate = "trance"                              # a pattern by name, or "x.x.xx.x"
+trance_gate("gate", pad)                                # draws pad.trance_gate, to change by hand, with its depth, rate and the rest beside it
+arp_pattern("arp", lead)                                # draws lead.arp_pattern
+pad.start(["A3", "C4", "E4"])                           # a held chord, chopped by the gate
+lead.start_arp("Am7", step="sixteenth")                 # an arpeggio that follows the pattern
+
+mine = trance_gate("chop", "x.x.x5x.x.3.xx..")          # or a pattern of your own, tied to nothing: mine.value, mine.text
 ```
 
 | | |
@@ -525,7 +533,8 @@ Each has `value` (a list: levels from 0 to 1 for a gate or a lane, and for an ar
 ![A drum sequencer: play, a tempo of 124 with a minus and a plus, swing, four rows of sixteen steps for kick, snare, hat and clap with the seventh column lit and the clap's row muted, a breakbeat chosen, and clear](docs/images/drum-seq.png)
 
 ```python
-beat = drum_seq("beat", ["kick", "snare", "hat", "clap"], drums, pattern="backbeat", tempo=110)
+kit = {"kick": make_synth("kick"), "snare": make_synth("snare"), "hat": make_synth("hat")}
+beat = drum_seq("beat", ["kick", "snare", "hat"], targets=kit, notes=[36, 52, 60], pattern="backbeat", tempo=110)
 ```
 
 `drum_seq` is a whole drum machine in one control. Tap a step on and off, drag across to paint, and drag up on a step for an accent. Tap a drum's name to hear it and the dot beside it to mute its row. Its own strip has play and stop, the tempo (− and +, or tap the number in time), swing, starter patterns (four on the floor, a backbeat, a breakbeat) and clear. On a phone it shows as many steps as fit a finger, a page at a time, and turns the page as it plays.
