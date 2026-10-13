@@ -498,14 +498,14 @@ def update(dt):
 ![A gate's pattern as sixteen bars of different heights with its named patterns, depth, rate, smoothing and stereo beside it, and an arpeggio's pattern as a grid of notes with a tied note, and under it lanes of accents, slides, octaves and lengths](docs/images/gate-arp-patterns.png)
 
 ```python
-gate_pattern("gate", pad)                               # pad's gate pattern, with its rate and depth beside it
+trance_gate("gate", pad)                               # pad's gate pattern, with its rate and depth beside it
 arp_pattern("arp", lead)                                # lead's arpeggio
-mine = gate_pattern("chop", "x.x.x5x.X.3.xx..")         # or one of your own: mine.value, mine.text
+mine = trance_gate("chop", "x.x.x5x.X.3.xx..")         # or one of your own: mine.value, mine.text
 ```
 
 | | |
 |---|---|
-| `gate_pattern(label, target)` | The steps that open and shut a sound in time, each a bar as tall as the gate is open. Tap a bar on and off, drag up and down on it for its level, drag across to draw a line of them. The − and + at its corner set how many steps (up to 32). `gate.preset("pump")` writes a built-in pattern: eighths, offbeat, gallop, trance, stutter, pump, triplets, dotted. |
+| `trance_gate(label, target)` | The steps that open and shut a sound in time, each a bar as tall as the gate is open. Tap a bar on and off, drag up and down on it for its level, drag across to draw a line of them. The − and + at its corner set how many steps (up to 32). `gate.preset("pump")` writes a built-in pattern: eighths, offbeat, gallop, trance, stutter, pump, triplets, dotted. |
 | `arp_pattern(label, target)` | An arpeggio's pattern: steps across, and the notes of the chord up the side. 1 is its lowest, and past its top note the count goes on an octave up, so on a chord of four notes row 5 is the lowest again, an octave higher. Tap a cell and that step plays that note; tap it again for a rest; drag sideways from it and the note is held across the next steps. Under the grid is a lane for each other thing a step has: tap for an accent (`^`), tap for a slide into the note (`~`), tap to go round the octaves (`'`), and drag up and down for the step's own length (`:`). `arp.preset("trance")` writes a built-in pattern: bounce, octaves, root-fifth, thumb, converge, diverge, offbeat, gallop, trance, acid. Options: `notes=` (how many rows of notes to start with, 8), `steps=`. |
 | `steps(label, 16)` | The lane of steps that the two above, and a row of a grid, are made of, to use for anything: a row of accents, a setting that changes each step. Tap and drag across; `levels=True` makes each a bar, `accents=True` gives an accent to a step you drag up on. `steps(label, target, "setting")` ties it to a setting. |
 | `drum_seq(label, drums, target)` | A drum sequencer that plays by itself: see below. |

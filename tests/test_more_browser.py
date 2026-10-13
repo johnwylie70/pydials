@@ -177,7 +177,7 @@ from pydials import *
 kit = js.Function('return { log: [], gatePattern: "x.x.", get(name) { return this[name] }, set(name, value) { this[name] = value }, describe(name) { return name === "gatePattern" ? { kind: "pattern" } : undefined }, noteOn(note, velocity) { this.log.push(note) }, noteOff(note) {} }')()
 js.kit = kit
 heard = []
-gate = gate_pattern("gate", kit)
+gate = trance_gate("gate", kit)
 beat = drum_seq("beat", ["kick", "snare"], kit, steps=8, tempo=240, value=["x.x.x.x.", "....X..."],
                 on_step=lambda drum, step, velocity: heard.append(drum))
 
@@ -186,7 +186,7 @@ def update(dt):
 """)).url)
     w.ready(2)
     w.wait("JSON.stringify(window.result) === '[\"x.x.\",false,false,false,240]'")
-    gate = "document.querySelector('[data-pyctures-src] canvas')[Symbol.for('dials.panel')].items.find((c) => c.kind === 'gatePattern')"
+    gate = "document.querySelector('[data-pyctures-src] canvas')[Symbol.for('dials.panel')].items.find((c) => c.kind === 'tranceGate')"
     seq = "document.querySelector('[data-pyctures-src] canvas')[Symbol.for('dials.panel')].items.find((c) => c.kind === 'drumSeq')"
     # The gate's second bar, tapped on: the thing in the page and Python both have the new pattern.
     x, y = w.page.evaluate("(() => { const g = %s, c = g.spotOf(1, g.u), b = document.querySelector('[data-pyctures-src] canvas').getBoundingClientRect(); return [b.left + c.x + c.w / 2, b.top + c.y + c.h / 2] })()" % gate)

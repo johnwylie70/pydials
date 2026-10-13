@@ -4751,11 +4751,11 @@ class StepLane extends Control {
 }
 
 /**
- * A GATE'S PATTERN: `gatePattern("gate", pad)`. The steps that open and shut a sound in time, each
+ * A TRANCE GATE'S PATTERN: `tranceGate("gate", pad)`. The steps that open and shut a sound in time, each
  * a bar as tall as the gate is open: tap one on and off, drag up and down for its level, drag
  * across to draw. It is a lane of steps with levels, and finds its target's pattern by name.
  */
-class GatePattern extends StepLane {
+class TranceGate extends StepLane {
   get names() { return ['gatePattern', 'gate_pattern', 'pattern'] }
   get bars() { return true }
   get presets() { return this.known || GATE_NAMED }
@@ -5465,7 +5465,7 @@ class DrumSeq extends Control {
 
 /** The settings that go beside a pattern, each under the names a target may give it (a synth's own first). One is made only for a setting the target has, and this table is all that says the names. */
 const BESIDE = {
-  gatePattern: [['depth', ['gateDepth', 'gate.depth', 'gate_depth']], ['rate', ['gateRate', 'gate.rate', 'gate_rate']], ['smooth', ['gateSmooth', 'gate.smooth', 'gate_smooth']], ['swing', ['gateSwing', 'gate.swing', 'gate_swing']], ['sends', ['gateSends', 'gate.sends', 'gate_sends']], ['stereo', ['gateStereo', 'gate.stereo', 'gate_stereo']]],
+  tranceGate: [['depth', ['gateDepth', 'gate.depth', 'gate_depth']], ['rate', ['gateRate', 'gate.rate', 'gate_rate']], ['smooth', ['gateSmooth', 'gate.smooth', 'gate_smooth']], ['swing', ['gateSwing', 'gate.swing', 'gate_swing']], ['sends', ['gateSends', 'gate.sends', 'gate_sends']], ['stereo', ['gateStereo', 'gate.stereo', 'gate_stereo']]],
   arpPattern: [['rate', ['arpRate', 'arp_rate']], ['order', ['arpOrder', 'arp_order']], ['octaves', ['arpOctaves', 'arp_octaves']], ['length', ['arpGate', 'arp_gate']], ['style', ['arpStyle', 'arp_style']], ['swing', ['arpSwing', 'arp_swing']]],
 }
 /**
@@ -5543,7 +5543,7 @@ class Wheel extends Slider {
 }
 
 Object.assign(KINDS, { joystick: Joystick, dpad: Dpad, actionButton: ActionButton, envelope: Envelope, stepGrid: StepGrid, pads: Pads, wheel: Wheel,
-  steps: StepLane, gatePattern: GatePattern, arpPattern: ArpPattern, drumSeq: DrumSeq })
+  steps: StepLane, tranceGate: TranceGate, arpPattern: ArpPattern, drumSeq: DrumSeq })
 Object.assign(KINDS, { number: NumberBox, textBox: TextBox, readout: Readout, checkbox: Checkbox, choose: Choose, radio: Radio, dropdown: Dropdown,
   xyPad: XYPad, colourPicker: ColourPicker, progress: Progress, light: Light, busy: Busy, rangeSlider: RangeSlider, fader: Fader })
 for (const kind of ['readout', 'progress', 'light', 'busy']) SLIDES.add(kind)
@@ -5698,8 +5698,8 @@ function more(panel) {
     wheel: make('wheel', ranged),
     /** A lane of steps to tap and drag: lane = steps("accent", 16), then lane.value, lane.text and lane.step = 3. { levels: true } makes each a bar. */
     steps: make('steps', laned),
-    /** A gate's pattern, each step a bar: gatePattern("gate", pad) finds pad's pattern and puts its rate, depth, smoothing and swing beside it; gatePattern("gate", 16) is one to read. */
-    gatePattern: (...args) => patterned(panel, 'gatePattern', laned(args)),
+    /** A gate's pattern, each step a bar: tranceGate("gate", pad) finds pad's pattern and puts its rate, depth, smoothing and swing beside it; tranceGate("gate", 16) is one to read. */
+    tranceGate: (...args) => patterned(panel, 'tranceGate', laned(args)),
     /** An arpeggio's pattern, steps across and chord notes up the side: arpPattern("arp", lead), or arpPattern("arp", "1 - 3 2 _ 1 3 5^"). */
     arpPattern: (...args) => patterned(panel, 'arpPattern', laned(args)),
     /** A drum sequencer that plays by itself: drumSeq("beat", ["kick", "snare", "hat", "clap"], drums). Options: steps, tempo, swing, pattern, playing, targets, notes, clock, onStep. */
@@ -5937,7 +5937,7 @@ const stepGrid = (...args) => dials().stepGrid(...args)
 const pads = (...args) => dials().pads(...args)
 const wheel = (...args) => dials().wheel(...args)
 const steps = (...args) => dials().steps(...args)
-const gatePattern = (...args) => dials().gatePattern(...args)
+const tranceGate = (...args) => dials().tranceGate(...args)
 const arpPattern = (...args) => dials().arpPattern(...args)
 const drumSeq = (...args) => dials().drumSeq(...args)
 const modWheel = (...args) => dials().modWheel(...args)
@@ -5946,4 +5946,4 @@ const pitchWheel = (...args) => dials().pitchWheel(...args)
 export { dials, dial, slider, button, toggle, select, rotary, keyboard, scope, meter, label, group, row, column, grid, page, spacer, wrap, layout, room, over, theme, version,
   number, stepper, textBox, readout, checkbox, choose, radio, dropdown, xyPad, colourPicker, colorPicker, progress, light, busy, rangeSlider, fader,
   joystick, dpad, actionButton, envelope, stepGrid, pads, wheel, modWheel, pitchWheel,
-  steps, gatePattern, arpPattern, drumSeq }
+  steps, tranceGate, arpPattern, drumSeq }

@@ -1101,7 +1101,7 @@ def theme(**colours):
 __all__ += ["number", "stepper", "text_box", "readout", "checkbox", "choose", "radio", "dropdown", "xy_pad", "colour_picker",
             "color_picker", "progress", "light", "busy", "range_slider", "fader", "joystick", "dpad", "action_button",
             "envelope", "step_grid", "pads", "wheel", "mod_wheel", "pitch_wheel",
-            "steps", "gate_pattern", "arp_pattern", "drum_seq"]
+            "steps", "trance_gate", "arp_pattern", "drum_seq"]
 
 
 class Number(_Ranged):
@@ -2185,9 +2185,9 @@ class Steps(_Bound):
         return len(self._cells)
 
 
-class GatePattern(Steps):
+class TranceGate(Steps):
     """A gate's pattern: steps that are bars, each as tall as the gate is open."""
-    kind = "gatePattern"
+    kind = "tranceGate"
     _names = ("gatePattern", "gate_pattern", "pattern")
     _presets = GATE_NAMED
     _marks = GATE_MARKS
@@ -2407,16 +2407,16 @@ def steps(label=None, a=None, b=None, *, value=None, max=None, levels=None, acce
                                        x=x, y=y, share=share, span=span, colour=colour, color=color, on_change=on_change))
 
 
-def gate_pattern(label=None, a=None, b=None, *, value=None, max=None, beside=None, x=None, y=None, share=None, span=None,
+def trance_gate(label=None, a=None, b=None, *, value=None, max=None, beside=None, x=None, y=None, share=None, span=None,
                  colour=None, color=None, on_change=None):
     """A gate's pattern, each step a bar as tall as the gate is open: tap one on and off, drag up and down for its
     level, drag across to draw.
 
-    gate_pattern("gate", pad) is pad's gate pattern, with its named patterns, depth, rate, smoothing and swing
-    beside it (beside=False: the pattern alone); gate_pattern("gate", 16) and gate_pattern("gate", "x.x.x5x.") are
+    trance_gate("gate", pad) is pad's gate pattern, with its named patterns, depth, rate, smoothing and swing
+    beside it (beside=False: the pattern alone); trance_gate("gate", 16) and trance_gate("gate", "x.x.x5x.") are
     ones to read: `gate.value` (levels from 0 to 1) and `gate.text` (a digit is a level in ninths).
     `gate.preset("pump")` writes a built-in pattern."""
-    return GatePattern(label, a, b, _options(value=value, max=max, beside=beside, x=x, y=y, share=share, span=span,
+    return TranceGate(label, a, b, _options(value=value, max=max, beside=beside, x=x, y=y, share=share, span=span,
                                              colour=colour, color=color, on_change=on_change))
 
 

@@ -258,8 +258,8 @@ def test_patterns_are_lists_and_the_engines_text_and_what_a_hand_draws_arrives_a
         from pydials import *
         pad = {"gatePattern": "x.x."}
         lane = steps("accent", 8)
-        gate = gate_pattern("gate", "x.5.9..3")
-        tied = gate_pattern("tied", pad)
+        gate = trance_gate("gate", "x.5.9..3")
+        tied = trance_gate("tied", pad)
         arp = arp_pattern("arp", "1 - 3 2 _ 1^ ~3 5':4")
         named = arp_pattern("named", "acid")
         print(lane.value, [round(v * 9) for v in gate.value], gate.text, len(gate), tied.text, arp.text, arp.value[4]["tie"], arp.value[7], named.text)
@@ -273,8 +273,8 @@ def test_patterns_are_lists_and_the_engines_text_and_what_a_hand_draws_arrives_a
     """)
     assert r["error"] is None
     assert made(r) == [("steps", 1, {"steps": 8, "label": "accent", "value": "........"}),
-                       ("gatePattern", 2, {"value": "x.5.x..3", "label": "gate", "steps": 8}),
-                       ("gatePattern", 3, {"label": "tied", "value": "x.x.", "steps": 4}),
+                       ("tranceGate", 2, {"value": "x.5.x..3", "label": "gate", "steps": 8}),
+                       ("tranceGate", 3, {"label": "tied", "value": "x.x.", "steps": 4}),
                        ("arpPattern", 4, {"value": "1 - 3 2 _ 1^ ~3 5':4", "label": "arp"}),
                        ("arpPattern", 5, {"value": "1^ 1 ~3 - 1' ~1 2^ -", "label": "named"})]
     lines = r["out"].splitlines()
