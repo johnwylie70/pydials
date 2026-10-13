@@ -17,7 +17,7 @@ playing = toggle("play", False)
 row()
 gate = gate_pattern("gate", "x.x.xxx.x.x.x5x.")
 row()
-arp = arp_pattern("arp", "1 3 2 4 3^ 2 4! 1^")
+arp = arp_pattern("arp", "1 3 2 4 3' 2 4^ 1'")
 
 time, step, on, held = 0, -1, False, None
 

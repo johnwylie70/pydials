@@ -1958,15 +1958,31 @@ def pitch_wheel(label=None, a=None, b=None, c=None, **options):
 
 
 # ---------------------------------------------------------------- patterns
-# A pattern as text, with the very marks the page's half uses: change a mark in both tables together.
+# A pattern as text: the text the sound engine reads, by the very marks the page's half uses (change a mark
+# in both tables together).
 #
-#   steps (a gate, a drum's row, a lane):  one mark a step.  . off   x on   X on, with an accent
-#                                          1 to 9: on, at that many tenths.  Spaces and | are for the eye.
-#   an arpeggio:  words with spaces between.  1 2 3: that note of the chord (1 is its root)   - a rest
-#                 _ the note before, held on   after a note: ^ an octave up (v down)   ! an accent   ~ a slide
+#   steps (a gate, a drum's row, a lane):  one mark a step.  . off   x on   1 to 8: on, at that many ninths
+#                                          (0 is off and 9 is on).  X on, with an accent: a drum's row and a
+#                                          lane have accents, a gate has none.  Spaces and | are for the eye.
+#   an arpeggio:  steps with a space between.  1 2 3: that note of the chord, counted from 1 at its lowest
+#                 (past its top note the count goes on an octave up)   - or . a rest   _ the note before, held on
+#                 after a note: ' an octave up (, down)   ^ an accent   :1 to :9 its own length, in tenths of a step
+#                 before a note: ~ slide into it
+#
+# In place of the steps a pattern may be the name of one that is built in ("trance", "gallop").
 
-STEP_MARKS = {"off": ".", "on": "x", "accent": "X", "skipped": " |"}
-ARP_MARKS = {"rest": "-", "tie": "_", "up": "^", "down": "v", "accent": "!", "slide": "~"}
+STEP_MARKS = {"off": ".", "on": "x", "accent": "X", "skipped": " |", "parts": 9}
+ARP_MARKS = {"rest": "-", "rests": "-.", "tie": "_", "up": "'", "down": ",", "accent": "^", "length": ":", "slide": "~"}
+GATE_NAMED = {"eighths": "x.x.x.x.x.x.x.x.", "offbeat": "..x...x...x...x.", "gallop": "x.xxx.xxx.xxx.xx", "trance": "x.x.xx.xx.x.xx.x",
+              "stutter": "xxx.xx.xx.xxx.x.", "pump": "2468246824682468", "triplets": "x..x..x..x..x..x..x..x..", "dotted": "x..x..x.x..x..x."}
+ARP_NAMED = {"bounce": "1 2 3 2", "octaves": "1 1' 1 1'", "root-fifth": "1 3 1' 3", "thumb": "1 2 1 3 1 4 1 3", "converge": "1 4 2 3",
+             "diverge": "2 3 1 4", "offbeat": "- 1 - 2 - 3 - 2", "gallop": "1^ - 1 1 2^ - 2 2", "trance": "1^ - 3 2 - 1^ 3 -",
+             "acid": "1^ 1 ~3 - 1' ~1 2^ -"}
+
+
+def _named(given, names):
+    """A pattern given as text may be the name of one: the text that name stands for, or what was given."""
+    return names.get(given.strip().lower(), given) if isinstance(given, str) else given
 
 
 def _steps_from(given):
@@ -1976,8 +1992,8 @@ def _steps_from(given):
         for mark in given:
             if mark in STEP_MARKS["skipped"]:
                 continue
-            if mark in "123456789":
-                out.append([int(mark) / 10, False])
+            if mark in "0123456789":
+                out.append([min(1, int(mark) / STEP_MARKS["parts"]), False])
             else:
                 out.append([0 if mark == STEP_MARKS["off"] else 1, mark == STEP_MARKS["accent"]])
         return out
@@ -1991,41 +2007,63 @@ def _steps_from(given):
 
 
 def _steps_text(steps):
-    marks = []
+    marks, parts = [], STEP_MARKS["parts"]
     for level, accent in steps:
-        marks.append(STEP_MARKS["off"] if not level > 0 else STEP_MARKS["accent"] if accent else STEP_MARKS["on"] if level >= 0.95
-                     else str(max(1, min(9, int(level * 10 + 0.5)))))
+        part = int((level or 0) * parts + 0.5)
+        marks.append(STEP_MARKS["off"] if part <= 0 else STEP_MARKS["accent"] if accent else STEP_MARKS["on"] if part >= parts else str(part))
     return "".join(marks)
+
+
+def _arp_step(**given):
+    """One step of an arpeggio: a rest, until it is given a note. A length of 0 is the arpeggio's own."""
+    step = {"note": 0, "octave": 0, "tie": False, "accent": False, "slide": False, "length": 0}
+    step.update(given)
+    return step
+
+
+def _arp_word(word):
+    m = ARP_MARKS
+    if word == m["tie"]:
+        return _arp_step(tie=True)
+    slide = word.startswith(m["slide"])
+    rest = word[len(m["slide"]):] if slide else word
+    digits = ""
+    while rest[:1].isdigit() and len(digits) < 2:
+        digits, rest = digits + rest[0], rest[1:]
+    if not digits:
+        return _arp_step()                      # a rest, and whatever is not a step
+    octave = 0
+    while rest[:1] in (m["up"], m["down"]):
+        octave += 1 if rest[0] == m["up"] else -1
+        rest = rest[1:]
+    accent = rest.startswith(m["accent"])
+    rest = rest[1:] if accent else rest
+    length = int(rest[1]) if len(rest) == 2 and rest[0] == m["length"] and rest[1].isdigit() else 0
+    return _arp_step(note=int(digits), octave=octave, accent=accent, slide=slide, length=length)
 
 
 def _arp_from(given):
     out = []
-    words = given.split() if isinstance(given, str) else list(given or ())
-    for word in words:
-        step = {"note": 0, "octave": 0, "tie": False, "accent": False, "slide": False}
+    for word in (_named(given, ARP_NAMED).split() if isinstance(given, str) else list(given or ())):
         if isinstance(word, dict):
-            step.update({k: word[k] for k in step if k in word})
+            out.append(_arp_step(**{k: word[k] for k in _arp_step() if k in word}))
         elif isinstance(word, str):
-            digits = "".join(ch for ch in word if ch.isdigit())
-            step["note"] = int(digits) if digits else 0
-            step["tie"] = word[:1] == ARP_MARKS["tie"]
-            step["octave"] = word.count(ARP_MARKS["up"]) - word.count(ARP_MARKS["down"])
-            step["accent"] = ARP_MARKS["accent"] in word
-            step["slide"] = ARP_MARKS["slide"] in word
+            out.append(_arp_word(word))
         else:
-            step["note"] = int(word or 0)
-        out.append(step)
+            out.append(_arp_step(note=int(word or 0)))
     return out
 
 
 def _arp_text(steps):
-    words = []
+    m, words = ARP_MARKS, []
     for s in steps:
-        word = ARP_MARKS["tie"] if s["tie"] else ARP_MARKS["rest"] if not s["note"] else str(s["note"]) + (
-            ARP_MARKS["up"] * s["octave"] if s["octave"] > 0 else ARP_MARKS["down"] * -s["octave"])
-        if s["note"] or s["tie"]:
-            word += (ARP_MARKS["accent"] if s["accent"] else "") + (ARP_MARKS["slide"] if s["slide"] else "")
-        words.append(word)
+        if s["tie"]:
+            words.append(m["tie"])
+        elif not s["note"]:
+            words.append(m["rest"])
+        else:
+            words.append((m["slide"] if s["slide"] else "") + str(s["note"]) + (m["up"] * s["octave"] if s["octave"] > 0 else m["down"] * -s["octave"])
+                         + (m["accent"] if s["accent"] else "") + (m["length"] + str(s["length"]) if s.get("length") else ""))
     return " ".join(words)
 
 
@@ -2033,6 +2071,7 @@ class Steps(_Bound):
     """A lane of steps. `value` is their levels (0 for off), `steps` each as a dict, `text` the same as text."""
     kind = "steps"
     _names = ("pattern", "steps")
+    _presets = {}           # the patterns it can be given by name
 
     def __init__(self, label, a, b, spec):
         if label is not None and not isinstance(label, str):
@@ -2056,9 +2095,9 @@ class Steps(_Bound):
             there = _read(self._target, self._param)
             self._as_text = isinstance(there, str)
             spec["label"] = label or spec.get("label")
-            if spec.get("value") is None and there is not None:
+            if spec.get("value") is None and there not in (None, ""):
                 spec["value"] = there
-        self._cells = _steps_from(spec.get("value"))
+        self._cells = _steps_from(_named(spec.get("value"), self._presets))
         if not self._cells:
             self._cells = [[0, False] for _ in range(spec.get("steps") or 16)]
         elif spec.get("steps"):
@@ -2075,9 +2114,14 @@ class Steps(_Bound):
     length = property(lambda self: len(self._cells))
 
     def _take(self, given):
-        self._cells = _steps_from(given)
+        self._cells = _steps_from(_named(given, self._presets))
         self._set("value", self.text)
         self._out_to_target()
+
+    def preset(self, name):
+        """Write a built-in pattern by its name: gate.preset("pump")."""
+        if name in self._presets:
+            self._take(name)
 
     value = value.setter(_take)
     steps = steps.setter(_take)
@@ -2126,8 +2170,8 @@ class Steps(_Bound):
         if self._target is None:
             return
         there = _read(self._target, self._param)
-        if there is not None and _steps_text(_steps_from(there)) != self.text:
-            self._cells = _steps_from(there)
+        if there not in (None, "") and _steps_text(_steps_from(_named(there, self._presets))) != self.text:
+            self._cells = _steps_from(_named(there, self._presets))
             self._set("value", self.text)
 
     def __iter__(self):
@@ -2140,7 +2184,8 @@ class Steps(_Bound):
 class GatePattern(Steps):
     """A gate's pattern: steps that are bars, each as tall as the gate is open."""
     kind = "gatePattern"
-    _names = ("gate_pattern", "gate", "pattern")
+    _names = ("gatePattern", "gate_pattern", "pattern")
+    _presets = GATE_NAMED
     _plated = True
 
 
@@ -2161,7 +2206,7 @@ class ArpPattern(_Bound):
         self._as_text = True
         param = b if isinstance(b, str) else None
         if target is not None and param is None and _in_page(target) is None:
-            param = next((name for name in ("arp_pattern", "arp", "pattern") if _read(target, name) is not None), "arp_pattern")
+            param = next((name for name in ("arpPattern", "arp_pattern", "pattern") if _read(target, name) is not None), "arpPattern")
         self._tie(spec, target, param)
         if "target" in spec and param is None:
             del spec["param"]
@@ -2169,7 +2214,7 @@ class ArpPattern(_Bound):
             there = _read(self._target, self._param)
             self._as_text = isinstance(there, str)
             spec["label"] = label or spec.get("label")
-            if spec.get("value") is None and there is not None:
+            if spec.get("value") is None and there not in (None, ""):
                 spec["value"] = there
         self._steps = _arp_from(spec.get("value"))
         if "target" not in spec and self._steps:
@@ -2190,8 +2235,9 @@ class ArpPattern(_Bound):
     text = text.setter(_take)
 
     def preset(self, name):
-        """Write a pattern by its name: "up", "down" or "up-down". (The page writes it, and says what it wrote a frame later.)"""
-        self._call("preset", name)
+        """Write a built-in pattern by its name: arp.preset("trance")."""
+        if name in ARP_NAMED:
+            self._take(name)
 
     step = Steps.step
 
@@ -2209,7 +2255,7 @@ class ArpPattern(_Bound):
         if self._target is None:
             return
         there = _read(self._target, self._param)
-        if there is not None and _arp_text(_arp_from(there)) != self.text:
+        if there not in (None, "") and _arp_text(_arp_from(there)) != self.text:
             self._steps = _arp_from(there)
             self._set("value", self.text)
 
@@ -2361,22 +2407,26 @@ def gate_pattern(label=None, a=None, b=None, *, value=None, max=None, beside=Non
     """A gate's pattern, each step a bar as tall as the gate is open: tap one on and off, drag up and down for its
     level, drag across to draw.
 
-    gate_pattern("gate", pad) finds pad's pattern by name and puts its rate, depth, smoothing and swing beside it
-    (beside=False: the pattern alone); gate_pattern("gate", 16) and gate_pattern("gate", "x.x.x5x.") are ones to
-    read: `gate.value`, `gate.text`."""
+    gate_pattern("gate", pad) is pad's gate pattern, with its named patterns, depth, rate, smoothing and swing
+    beside it (beside=False: the pattern alone); gate_pattern("gate", 16) and gate_pattern("gate", "x.x.x5x.") are
+    ones to read: `gate.value` (levels from 0 to 1) and `gate.text` (a digit is a level in ninths).
+    `gate.preset("pump")` writes a built-in pattern."""
     return GatePattern(label, a, b, _options(value=value, max=max, beside=beside, x=x, y=y, share=share, span=span,
                                              colour=colour, color=color, on_change=on_change))
 
 
-def arp_pattern(label=None, a=None, b=None, *, value=None, steps=None, max=None, notes=None, octaves=None, slide=None,
+def arp_pattern(label=None, a=None, b=None, *, value=None, steps=None, max=None, notes=None,
                 beside=None, x=None, y=None, share=None, span=None, colour=None, color=None, on_change=None):
-    """An arpeggio's pattern: steps across, and the notes of the chord up the side (1 is its root).
+    """An arpeggio's pattern: steps across, and the notes of the chord up the side (1 is its lowest; past its top
+    note the count goes on an octave up).
 
-    Tap a cell and that step plays that note; tap it again for a rest; drag sideways to hold the note on; the lane
-    under the grid gives a step an accent. arp_pattern("arp", lead) finds lead's pattern by name, with its rate,
-    order, octaves, length and style beside it; arp_pattern("arp", "1 - 3 2 _ 1 3 5^") is one to read:
-    `arp.value` (a dict for each step) and `arp.text`. `arp.preset("up-down")` writes a named pattern."""
-    return ArpPattern(label, a, b, _options(value=value, steps=steps, max=max, notes=notes, octaves=octaves, slide=slide,
+    Tap a cell and that step plays that note; tap it again for a rest; drag sideways to hold the note on. The lanes
+    under the grid give a step an accent (^), a slide into it (~), an octave (') and a length of its own (:).
+    arp_pattern("arp", lead) is lead's pattern, with its named patterns beside it;
+    arp_pattern("arp", "1 - 3 2 _ 1^ ~3 5'") is one to read: `arp.value` (a dict for each step: note, octave, tie,
+    accent, slide, length) and `arp.text`, the text the sound engine reads. `arp.preset("trance")` writes a
+    built-in pattern; notes= is how many rows of notes it starts with (8)."""
+    return ArpPattern(label, a, b, _options(value=value, steps=steps, max=max, notes=notes,
                                             beside=beside, x=x, y=y, share=share, span=span, colour=colour, color=color,
                                             on_change=on_change))
 

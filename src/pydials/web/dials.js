@@ -4430,45 +4430,62 @@ class Envelope extends Control {
 // --- patterns: rows of steps, as lists and as text
 /**
  * A PATTERN AS TEXT, so that it can be saved, pasted into a scene's code and handed to a target
- * that keeps its pattern that way. The marks are these two tables and nothing else: change a mark
- * here and every control reads and writes the new one.
+ * that keeps its pattern that way. It is the text the sound engine reads (synths.js, and a song's
+ * file), mark for mark. The marks are these two tables and nothing else.
  *
- *   steps (a gate, a drum's row, a lane):  one mark a step.  . off   x on   X on, with an accent
- *                                          1 to 9: on, at that many tenths.  Spaces and | are for the eye.
- *   an arpeggio:  words with spaces between.  1 2 3: that note of the chord (1 is its root)   - a rest
- *                 _ the note before, held on   after a note: ^ an octave up (v down)   ! an accent   ~ a slide
+ *   steps (a gate, a drum's row, a lane):  one mark a step.  . off   x on   1 to 8: on, at that many ninths
+ *                                          (0 is off and 9 is on).  X on, with an accent: a drum's row and a
+ *                                          lane have accents, a gate has none.  Spaces and | are for the eye.
+ *   an arpeggio:  steps with a space between.  1 2 3: that note of the chord, counted from 1 at its lowest
+ *                 (past its top note the count goes on an octave up)   - or . a rest   _ the note before, held on
+ *                 after a note: ' an octave up (, down)   ^ an accent   :1 to :9 its own length, in tenths of a step
+ *                 before a note: ~ slide into it
+ *
+ * In place of the steps a pattern may be the name of one that is built in ("trance", "gallop").
  */
-const STEP_MARKS = { off: '.', on: 'x', accent: 'X', skipped: ' |' }
-const ARP_MARKS = { rest: '-', tie: '_', up: '^', down: 'v', accent: '!', slide: '~' }
+const STEP_MARKS = { off: '.', on: 'x', accent: 'X', skipped: ' |', parts: 9 }
+const ARP_MARKS = { rest: '-', rests: '-.', tie: '_', up: "'", down: ',', accent: '^', length: ':', slide: '~' }
+/** The patterns that are built in, by name: a target that says its own (describe(name).patterns) is believed instead. */
+const GATE_NAMED = { eighths: 'x.x.x.x.x.x.x.x.', offbeat: '..x...x...x...x.', gallop: 'x.xxx.xxx.xxx.xx', trance: 'x.x.xx.xx.x.xx.x', stutter: 'xxx.xx.xx.xxx.x.', pump: '2468246824682468', triplets: 'x..x..x..x..x..x..x..x..', dotted: 'x..x..x.x..x..x.' }
+const ARP_NAMED = { bounce: '1 2 3 2', octaves: "1 1' 1 1'", 'root-fifth': "1 3 1' 3", thumb: '1 2 1 3 1 4 1 3', converge: '1 4 2 3', diverge: '2 3 1 4', offbeat: '- 1 - 2 - 3 - 2', gallop: '1^ - 1 1 2^ - 2 2', trance: '1^ - 3 2 - 1^ 3 -', acid: "1^ 1 ~3 - 1' ~1 2^ -" }
 
 function stepsFromText(text) {
-  const steps = []
+  const steps = [], parts = STEP_MARKS.parts
   for (const mark of String(text)) {
     if (STEP_MARKS.skipped.includes(mark)) continue
-    if (mark >= '1' && mark <= '9') steps.push({ level: Number(mark) / 10, accent: false })
+    if (mark >= '0' && mark <= '9') steps.push({ level: Math.min(1, Number(mark) / parts), accent: false })
     else steps.push({ level: mark === STEP_MARKS.off ? 0 : 1, accent: mark === STEP_MARKS.accent })
   }
   return steps
 }
 function stepsToText(steps) {
-  return steps.map((s) => (!(s.level > 0) ? STEP_MARKS.off : s.accent ? STEP_MARKS.accent : s.level >= 0.95 ? STEP_MARKS.on : String(clamp(Math.round(s.level * 10), 1, 9)))).join('')
+  return steps.map((s) => {
+    const part = Math.round((s.level || 0) * STEP_MARKS.parts)
+    return part <= 0 ? STEP_MARKS.off : s.accent ? STEP_MARKS.accent : part >= STEP_MARKS.parts ? STEP_MARKS.on : String(part)
+  }).join('')
 }
+/** One step of an arpeggio: a rest, until it is given a note. `length` 0 is the arpeggio's own. */
+const arpStep = (given) => ({ note: 0, octave: 0, tie: false, accent: false, slide: false, length: 0, ...given })
 function arpFromText(text) {
   return String(text).trim().split(/\s+/).filter(Boolean).map((word) => {
-    const step = { note: 0, octave: 0, tie: word[0] === ARP_MARKS.tie, accent: false, slide: false }
-    step.note = parseInt(word, 10) || 0
-    for (const mark of word.replace(/^\d+/, '')) {
-      if (mark === ARP_MARKS.up) step.octave++
-      else if (mark === ARP_MARKS.down) step.octave--
-      else if (mark === ARP_MARKS.accent) step.accent = true
-      else if (mark === ARP_MARKS.slide) step.slide = true
-    }
-    return step
+    if (word === ARP_MARKS.tie) return arpStep({ tie: true })
+    const at = /^(~?)(\d{1,2})([',]*)(\^?)(?::(\d))?$/.exec(word.split(ARP_MARKS.slide).join('~').split(ARP_MARKS.up).join("'").split(ARP_MARKS.down).join(',').split(ARP_MARKS.accent).join('^').split(ARP_MARKS.length).join(':'))
+    // (What is not a step is a rest: a pattern half typed is still a pattern.)
+    if (!at) return arpStep()
+    let octave = 0
+    for (const mark of at[3]) octave += mark === "'" ? 1 : -1
+    return arpStep({ note: Number(at[2]), octave, accent: !!at[4], slide: !!at[1], length: Number(at[5]) || 0 })
   })
 }
 function arpToText(steps) {
-  return steps.map((s) => (s.tie ? ARP_MARKS.tie : !s.note ? ARP_MARKS.rest : s.note + (s.octave > 0 ? ARP_MARKS.up.repeat(s.octave) : ARP_MARKS.down.repeat(-s.octave || 0))) + (s.note || s.tie ? (s.accent ? ARP_MARKS.accent : '') + (s.slide ? ARP_MARKS.slide : '') : '')).join(' ')
+  return steps.map((s) => {
+    if (s.tie) return ARP_MARKS.tie
+    if (!s.note) return ARP_MARKS.rest
+    return (s.slide ? ARP_MARKS.slide : '') + s.note + (s.octave > 0 ? ARP_MARKS.up.repeat(s.octave) : ARP_MARKS.down.repeat(-s.octave || 0)) + (s.accent ? ARP_MARKS.accent : '') + (s.length ? ARP_MARKS.length + s.length : '')
+  }).join(' ')
 }
+/** A pattern given as text may be the name of one: the text that name stands for, or the text as it was. */
+const named = (text, names) => (typeof text === 'string' && names[text.trim().toLowerCase()]) || text
 
 /**
  * ONE ROW OF STEPS: what a gate, a drum's row, a row of a grid and a lane of accents all are. Each
@@ -4511,7 +4528,7 @@ class Lane {
     return true
   }
   /** A level from where a finger is in a step: `down` is 0 at its top and 1 at its bottom. */
-  high(down) { const level = Math.round((1 - down) * 20) / 20; return level < 0.08 ? 0 : clamp(level, 0, 1) }
+  high(down) { return clamp(Math.round((1 - down) * STEP_MARKS.parts) / STEP_MARKS.parts, 0, 1) } // (in ninths, as the text has them)
   /** A finger lands on step i, `down` of the way down it. Each of these three says whether anything changed. */
   begin(i, down) {
     this.stroke = { first: i, down, was: this.level[i], moved: false, paint: this.level[i] ? 0 : 1 }
@@ -4589,11 +4606,11 @@ function drawCount(g, control, u, n) {
   g.stroke()
   words(g, String(n), b.x + b.w / 2, cy + 0.5 * u, 12 * u, THEME.text, 'center', '600')
 }
-/** The step a target says is sounding, if it says: its step() or its position(). */
-function soundingOf(target, length) {
+/** The step a target says is sounding, if it says: its step() or its position(), or the setting of that name (a synth's "gateStep"). Below 0 is none. */
+function soundingOf(target, length, name) {
   const ask = method(target, 'step', 'position')
-  const at = ask ? ask() : null
-  return typeof at === 'number' && at >= 0 ? Math.floor(at) % length : null
+  const at = ask ? ask() : name ? readTarget(target, name) : null
+  return typeof at !== 'number' ? null : at < 0 ? -1 : Math.floor(at) % length
 }
 
 /**
@@ -4620,8 +4637,9 @@ class StepLane extends Control {
     const most = clamp(Math.round(spec.max ?? d.max ?? d.steps ?? 32), 1, 64)
     this.lane = new Lane(most, spec.steps ?? d.length ?? Math.min(16, most), { bars: spec.levels ?? this.bars, accents: spec.accents, velocity: spec.velocity })
     this.resizable = spec.length !== false // may its length be changed by hand?
-    const given = spec.value ?? there ?? d.default
-    if (given != null) this.read(given, spec.steps == null)
+    this.known = d.patterns && typeof d.patterns === 'object' ? d.patterns : null // the target's own named patterns
+    const given = spec.value ?? (there === '' ? null : there) ?? d.default
+    if (given != null && given !== '') this.read(given, spec.steps == null)
     this.playing = -1
     this.per = this.lane.length
     this.many = false
@@ -4629,8 +4647,19 @@ class StepLane extends Control {
   }
   get names() { return ['pattern', 'steps'] }
   get bars() { return false }
+  /** The patterns it can be set to by name, and the setting of its target that says which step is sounding. */
+  get presets() { return {} }
+  get sounding() { return null }
+  /** Write a pattern by its name. */
+  preset(name) {
+    const text = this.presets[String(name).toLowerCase()]
+    if (!text) return
+    this.read(text, true)
+    this.panel.arrange = true
+    this.tell()
+  }
   /** Take a pattern in any of the ways one is written. */
-  read(given, fit) { this.lane.take(given, fit) }
+  read(given, fit) { this.lane.take(named(given, this.presets), fit) }
   /** What the target is told: text, or a list of levels. */
   write() { if (this.target) writeTarget(this.target, this.param, this.asText ? this.text : this.value) }
   get value() { return this.lane.levels }
@@ -4696,13 +4725,14 @@ class StepLane extends Control {
   up() { if (this.drawing && this.lane.end()) this.tell(); this.drawing = false }
   frame() {
     if (!this.target) return
-    const now = soundingOf(this.target, this.lane.length)
+    const now = soundingOf(this.target, this.lane.length, this.sounding)
     if (now != null) this.step = now
     if (this.held) return
     // A target whose pattern was changed some other way is followed.
     const there = readTarget(this.target, this.param)
-    if (there == null) return
-    const said = typeof there === 'string' ? stepsToText(stepsFromText(there)) : [...there].join()
+    // (An empty pattern is a target that has none: what is drawn here stays, until it is given one.)
+    if (there == null || there === '') return
+    const said = typeof there === 'string' ? stepsToText(stepsFromText(named(there, this.presets))) : [...there].join()
     if (said === (typeof there === 'string' ? this.text : this.value.join())) return
     this.read(there, true)
     this.panel.arrange = true
@@ -4720,25 +4750,29 @@ class StepLane extends Control {
  * across to draw. It is a lane of steps with levels, and finds its target's pattern by name.
  */
 class GatePattern extends StepLane {
-  get names() { return ['gate_pattern', 'gatePattern', 'gate', 'pattern'] }
+  get names() { return ['gatePattern', 'gate_pattern', 'pattern'] }
   get bars() { return true }
+  get presets() { return this.known || GATE_NAMED }
+  get sounding() { return 'gateStep' }
 }
 
-/** The patterns an arpeggio can be set to by name: each makes its steps for a chord of so many notes. */
-const ARP_PRESETS = {
-  up: (n) => Array.from({ length: n }, (_, i) => i + 1),
-  down: (n) => Array.from({ length: n }, (_, i) => n - i),
-  'up-down': (n) => [...Array.from({ length: n }, (_, i) => i + 1), ...Array.from({ length: Math.max(0, n - 2) }, (_, i) => n - 1 - i)],
-}
+/** The lanes under an arpeggio's grid, one for each thing a step has besides its note: the mark it is known by, and the step's word for it. */
+const ARP_LANES = [['^', 'accent'], ['~', 'slide'], ["'", 'octave'], [':', 'length']]
+/** The octaves a tap on a step's octave goes through, in turn. */
+const ARP_OCTAVES = [0, 1, 2, -1]
 
 /**
- * AN ARPEGGIO'S PATTERN: `arpPattern("arp", lead)`. Steps across and the notes of the chord up the
- * side (1 is its root; the rows above them are the same notes an octave up). Tap a cell and that
- * step plays that note; tap it again for a rest; drag sideways from it and the note is held across
- * the next steps. The lane under the grid gives a step an accent, and a second one a slide where
- * the pattern has them. `arp.value` is the steps, each { note, octave, tie, accent, slide } (note 0
- * is a rest), `arp.text` the same as text ("1 - 3 2 _ 1 3 5^"), and either may be set.
- * `arp.preset("up-down")` writes a named pattern.
+ * AN ARPEGGIO'S PATTERN: `arpPattern("arp", lead)`. Steps across, and the notes of the chord up the
+ * side: 1 is its lowest, and past its top note the count goes on an octave up, so on a chord of
+ * four notes row 5 is the lowest again, an octave higher. Tap a cell and that step plays that note;
+ * tap it again for a rest; drag sideways from it and the note is held across the next steps. Under
+ * the grid is a lane for each other thing a step has: tap for an accent (^), tap for a slide into
+ * the note (~), tap to go round the octaves ('), and drag up and down for the step's own length (:).
+ *
+ * `arp.value` is the steps, each { note, octave, tie, accent, slide, length } (note 0 is a rest;
+ * length 0 is the arpeggio's own, 1 to 9 tenths of a step), and `arp.text` the same as the text the
+ * sound engine reads ("1 - 3 2 _ 1 3 5^"). Either may be set, and so may a built-in pattern's name:
+ * `arp.preset("trance")`.
  */
 class ArpPattern extends Control {
   constructor(panel, kind, spec) {
@@ -4746,28 +4780,32 @@ class ArpPattern extends Control {
     let d = {}, there
     if (spec.target) {
       this.target = spec.target
-      this.param = spec.param ?? ['arp_pattern', 'arpPattern', 'arp', 'pattern'].find((name) => readTarget(this.target, name) !== undefined || Object.keys(describe(this.target, name)).length) ?? 'arp_pattern'
+      this.param = spec.param ?? ['arpPattern', 'arp_pattern', 'pattern'].find((name) => readTarget(this.target, name) !== undefined || Object.keys(describe(this.target, name)).length) ?? 'arpPattern'
       d = describe(this.target, this.param)
       there = readTarget(this.target, this.param)
       if (!this.label && !spec.bare) this.label = d.label ?? d.name ?? String(this.param)
       this.asText = typeof there === 'string' || !isList(there)
     }
+    this.known = d.patterns && typeof d.patterns === 'object' ? d.patterns : null
     this.most = clamp(Math.round(spec.max ?? d.max ?? d.steps ?? 32), 1, 64)
-    this.notes = clamp(Math.round(spec.notes ?? d.notes ?? 4), 1, 8)
-    this.octaves = clamp(Math.round(spec.octaves ?? d.octaves ?? 2), 1, 3)
-    this.slides = spec.slide ?? d.slide ?? false
+    this.rows = clamp(Math.round(spec.notes ?? d.notes ?? 8), 1, 16)
     this.pattern = []
     this.count = spec.steps ?? Math.min(8, this.most)
-    const given = spec.value ?? there ?? d.default
-    this.read(given ?? ARP_PRESETS.up(this.notes), spec.steps == null)
+    const given = spec.value ?? (there === '' ? null : there) ?? d.default
+    this.read(given != null && given !== '' ? given : [1, 2, 3, 4], spec.steps == null)
     this.playing = -1
     this.many = false
     if (spec.value != null && this.target) this.write()
   }
+  get presets() { return this.known || ARP_NAMED }
+  /** Take a pattern: its text, a built-in pattern's name, or a list whose items are steps, a step's text, or a note's number (0 for a rest). */
   read(given, fit) {
-    const steps = typeof given === 'string' ? arpFromText(given) : [...(given || [])].map((s) => (typeof s === 'object' && s ? { note: s.note || 0, octave: s.octave || 0, tie: !!s.tie, accent: !!s.accent, slide: !!s.slide } : { note: Number(s) || 0, octave: 0, tie: false, accent: false, slide: false }))
+    const steps = typeof given === 'string' ? arpFromText(named(given, this.presets))
+      : [...(given || [])].map((s) => (typeof s === 'string' ? arpFromText(s)[0] || arpStep() : typeof s === 'object' && s ? arpStep({ note: s.note || 0, octave: s.octave || 0, tie: !!s.tie, accent: !!s.accent, slide: !!s.slide, length: clamp(Math.round(s.length || 0), 0, 9) }) : arpStep({ note: Number(s) || 0 })))
     if (fit && steps.length) this.count = clamp(steps.length, 1, this.most)
-    this.pattern = Array.from({ length: this.most }, (_, i) => steps[i] || { note: 0, octave: 0, tie: false, accent: false, slide: false })
+    this.pattern = Array.from({ length: this.most }, (_, i) => steps[i] || arpStep())
+    // A note above the rows there are is given a row.
+    for (const step of steps) if (step.note > this.rows) this.rows = Math.min(16, step.note)
   }
   write() { if (this.target) writeTarget(this.target, this.param, this.asText ? this.text : this.value) }
   get value() { return this.pattern.slice(0, this.count).map((s) => ({ ...s })) }
@@ -4779,11 +4817,11 @@ class ArpPattern extends Control {
   set length(n) { n = clamp(Math.round(n), 1, this.most); if (n !== this.count) { this.count = n; this.write(); this.panel.arrange = true } }
   get step() { return this.playing }
   set step(n) { n = n == null || n < 0 ? -1 : Math.floor(n) % this.count; if (n !== this.playing) { this.playing = n; this.touch() } }
-  /** Write a pattern by its name: "up", "down", "up-down". */
+  /** Write a pattern by its name: "bounce", "trance", "acid" and the rest. */
   preset(name) {
-    const make = ARP_PRESETS[name]
-    if (!make) return
-    this.read(make(this.notes), true)
+    const text = this.presets[String(name).toLowerCase()]
+    if (!text) return
+    this.read(text, true)
     this.panel.arrange = true
     this.tell()
   }
@@ -4794,29 +4832,26 @@ class ArpPattern extends Control {
     this.touch()
   }
   scaleOf() { return 1 }
-  get rows() { return this.notes * this.octaves }
-  get lanes() { return this.slides ? 2 : 1 }
   natural(u, room) {
-    const side = (room - 40 * u) / this.count
-    this.each = clamp(side, STEP_LEAST * u, 34 * u)
-    this.high = clamp(200 / this.rows, 16, 26) * u
-    return [Math.max(this.count * this.each + 40 * u, 170 * u), 28 * u + this.rows * this.high + this.lanes * 24 * u + 10 * u]
+    this.each = clamp((room - 40 * u) / this.count, STEP_LEAST * u, 34 * u)
+    this.tall_ = clamp(200 / this.rows, 14, 26) * u
+    return [Math.max(this.count * this.each + 40 * u, 170 * u), 28 * u + this.rows * this.tall_ + ARP_LANES.length * 24 * u + 10 * u]
   }
   grid(u) {
-    const x = this.x + 30 * u, y = this.y + 28 * u, w = (this.w - 40 * u) / this.count, h = (this.h - 38 * u - this.lanes * 24 * u) / this.rows
+    const x = this.x + 30 * u, y = this.y + 28 * u, w = (this.w - 40 * u) / this.count, h = (this.h - 38 * u - ARP_LANES.length * 24 * u) / this.rows
     return { x, y, w, h, under: y + this.rows * h + 4 * u }
   }
-  /** What is at a point: { i, row } in the grid (row 0 is the root, at the bottom), or { i, lane } under it, or null. */
+  /** What is at a point: { i, row } in the grid (row 0 is note 1, at the bottom), or { i, lane } under it, or null. */
   cellAt(p, u) {
     const s = this.grid(u), i = Math.floor((p.x - s.x) / s.w)
     if (i < 0 || i >= this.count) return null
-    if (p.y >= s.under) { const lane = Math.floor((p.y - s.under) / (24 * u)); return lane < this.lanes ? { i, lane } : null }
+    if (p.y >= s.under) { const lane = Math.floor((p.y - s.under) / (24 * u)); return lane < ARP_LANES.length ? { i, lane } : null }
     const row = this.rows - 1 - Math.floor((p.y - s.y) / s.h)
     return row >= 0 && row < this.rows ? { i, row } : null
   }
   down(p) {
     const u = this.u
-    this.from = null
+    this.from = this.sizing = null
     if (p.y < this.y + 26 * u) {
       const by = countAt(this, p, u), n = clamp(this.count + by, 1, this.most)
       if (by && n !== this.count) { this.count = n; this.panel.arrange = true; this.tell() }
@@ -4826,42 +4861,58 @@ class ArpPattern extends Control {
     if (!at) return
     const step = this.pattern[at.i]
     if (at.lane != null) {
-      // The lanes under the grid: an accent, and a slide.
-      const name = at.lane ? 'slide' : 'accent'
-      step[name] = !step[name]
+      const word = ARP_LANES[at.lane][1]
+      // A rest and a tie have nothing to accent, slide, raise or shorten.
+      if (!step.note) return
+      if (word === 'length') { this.sizing = { i: at.i, y: p.y, was: step.length, moved: false }; return }
+      if (word === 'octave') step.octave = ARP_OCTAVES[(ARP_OCTAVES.indexOf(step.octave) + 1) % ARP_OCTAVES.length]
+      else step[word] = !step[word]
       return this.tell()
     }
-    const note = at.row % this.notes + 1, octave = Math.floor(at.row / this.notes)
-    // The chosen cell tapped again is a rest; any other cell is that step's note.
-    const same = !step.tie && step.note === note && step.octave === octave
-    Object.assign(step, { note: same ? 0 : note, octave: same ? 0 : octave, tie: false })
+    // The chosen cell tapped again is a rest; any other cell is that step's note, and it keeps what else the step had.
+    const note = at.row + 1, same = !step.tie && step.note === note
+    Object.assign(step, same ? arpStep() : { note, tie: false })
     this.from = same ? null : at.i
     this.before = this.pattern.map((was) => ({ ...was })) // what each step was, for one that is tied over and then let go again
     this.tell()
   }
   move(p) {
+    const u = this.u
+    if (this.sizing) {
+      // Its own length: up for longer, down for shorter, a tenth of a step for each few points.
+      const z = this.sizing, length = clamp(z.was + Math.round((z.y - p.y) / (5 * u)), 0, 9)
+      if (Math.abs(p.y - z.y) > TAP_REACH * u) z.moved = true
+      if (length !== this.pattern[z.i].length) { this.pattern[z.i].length = length; this.tell() }
+      return
+    }
     if (this.from == null) return
     // Dragged sideways from a note: it is held across the steps the finger has passed, and no further.
-    const s = this.grid(this.u), to = clamp(Math.floor((p.x - s.x) / s.w), this.from, this.count - 1)
+    const s = this.grid(u), to = clamp(Math.floor((p.x - s.x) / s.w), this.from, this.count - 1)
     let changed = false
     for (let i = this.from + 1; i <= Math.max(to, this.reach || 0); i++) {
       const step = this.pattern[i]
-      if (i <= to && !step.tie) { Object.assign(step, { note: 0, octave: 0, tie: true }); changed = true }
+      if (i <= to && !step.tie) { Object.assign(step, arpStep({ tie: true })); changed = true }
       else if (i > to && step.tie) { Object.assign(step, this.before[i]); changed = true }
     }
     this.reach = to
     if (changed) this.tell()
   }
-  up() { this.from = null; this.reach = 0 }
+  up() {
+    // A tap on a step's length: half a step, or back to the arpeggio's own.
+    const z = this.sizing
+    if (z && !z.moved) { this.pattern[z.i].length = z.was ? 0 : 5; this.tell() }
+    this.from = this.sizing = null
+    this.reach = 0
+  }
   frame() {
     if (!this.target) return
-    const now = soundingOf(this.target, this.count)
+    const now = soundingOf(this.target, this.count, 'arpStep')
     if (now != null) this.step = now
     if (this.held) return
     const there = readTarget(this.target, this.param)
-    if (there == null) return
-    const said = typeof there === 'string' ? arpToText(arpFromText(there)) : arpToText([...there].map((s) => (typeof s === 'object' ? s : { note: s })))
-    if (said === this.text) return
+    if (there == null || there === '') return
+    const said = typeof there === 'string' ? arpToText(arpFromText(named(there, this.presets))) : null
+    if (said === this.text || (said == null && arpToText([...there].map((s) => (typeof s === 'object' && s ? arpStep(s) : typeof s === 'string' ? arpFromText(s)[0] || arpStep() : arpStep({ note: Number(s) || 0 })))) === this.text)) return
     this.read(there, true)
     this.panel.arrange = true
   }
@@ -4871,8 +4922,7 @@ class ArpPattern extends Control {
     drawCount(g, this, u, this.count)
     for (let row = 0; row < this.rows; row++) {
       const y = s.y + (this.rows - 1 - row) * s.h
-      // The notes of the chord, named up the side: the octave above is drawn a little apart from the one below.
-      words(g, String(row % this.notes + 1) + (row >= this.notes ? '↑'.repeat(Math.floor(row / this.notes)) : ''), this.x + 26 * u, y + s.h / 2, 10 * u, THEME.dim, 'right')
+      words(g, String(row + 1), this.x + 26 * u, y + s.h / 2, 10 * u, THEME.dim, 'right')
       for (let i = 0; i < this.count; i++) {
         rounded(g, s.x + i * s.w + 1.5 * u, y + 1.5 * u, s.w - 3 * u, s.h - 3 * u, 4 * u)
         g.fillStyle = i === this.playing ? THEME.track : i % 4 === 0 ? THEME.knob : THEME.well
@@ -4885,22 +4935,32 @@ class ArpPattern extends Control {
       if (!step.note || step.tie) continue
       let last = i
       while (last + 1 < this.count && this.pattern[last + 1].tie) last++
-      const row = clamp(step.note - 1 + step.octave * this.notes, 0, this.rows - 1), y = s.y + (this.rows - 1 - row) * s.h
+      const row = clamp(step.note - 1, 0, this.rows - 1), y = s.y + (this.rows - 1 - row) * s.h
       rounded(g, s.x + i * s.w + 1.5 * u, y + 1.5 * u, (last - i + 1) * s.w - 3 * u, s.h - 3 * u, 4 * u)
       g.fillStyle = this.accent
+      g.globalAlpha = step.accent ? 1 : 0.72
       g.fill()
+      g.globalAlpha = 1
       if (i <= this.playing && this.playing <= last) { g.strokeStyle = THEME.text; g.lineWidth = 1.5 * u; g.stroke() }
     }
-    for (let lane = 0; lane < this.lanes; lane++) {
-      const y = s.under + lane * 24 * u, name = lane ? 'slide' : 'accent'
-      words(g, lane ? '~' : '!', this.x + 26 * u, y + 11 * u, 11 * u, THEME.dim, 'right', '600')
+    ARP_LANES.forEach(([mark, word], lane) => {
+      const y = s.under + lane * 24 * u + 11 * u
+      words(g, mark, this.x + 26 * u, y, 12 * u, THEME.dim, 'right', '600')
       for (let i = 0; i < this.count; i++) {
-        const on = this.pattern[i][name]
-        g.beginPath(); g.arc(s.x + (i + 0.5) * s.w, y + 11 * u, (on ? 6 : 3.5) * u, 0, TAU)
-        g.fillStyle = on ? this.accent : THEME.track
-        g.fill()
+        const step = this.pattern[i], cx = s.x + (i + 0.5) * s.w, has = step.note ? step[word] : 0
+        if (word === 'octave' && has) words(g, has > 0 ? '+' + has : String(has), cx, y, 11 * u, this.accent, 'center', '600')
+        else if (word === 'length' && has) {
+          // Its own length, as a bar so much of the step long.
+          rounded(g, cx - s.w / 2 + 3 * u, y - 4 * u, (s.w - 6 * u) * has / 10, 8 * u, 3 * u)
+          g.fillStyle = this.accent
+          g.fill()
+        } else {
+          g.beginPath(); g.arc(cx, y, (has ? 6 : step.note ? 3.5 : 2) * u, 0, TAU)
+          g.fillStyle = has ? this.accent : THEME.track
+          g.fill()
+        }
       }
-    }
+    })
   }
 }
 
@@ -5128,8 +5188,9 @@ const SWINGS = [0, 0.2, 0.33, 0.5]
  * by name) is anything with noteOn(note, velocity), and each row plays its drum's note (a kick is
  * 36; `notes` says otherwise). `onStep(row, step, velocity, at)` hears every step that sounds.
  *
- * THE BEAT IS KEPT TIGHT BY THE TARGET'S OWN CLOCK when it has one. A target (or `clock`) that
- * offers time(), in seconds, is handed each step a little before it is due, as
+ * THE BEAT IS KEPT TIGHT BY THE SOUND'S OWN CLOCK when there is one: `clock: soundTime` (a function
+ * that gives the time in seconds), or a target or `clock` that offers time(). Each step is then
+ * handed over a little before it is due, as
  * noteOn(note, velocity, { at }) and noteOff(note, { at }), to play at exactly that time. With no
  * such clock a step is played on the frame it falls due, which wobbles when the page is busy.
  */
@@ -5141,7 +5202,9 @@ class DrumSeq extends Control {
     this.lanes = this.rows.map(() => new Lane(32, this.count, { accents: true }))
     this.notes = this.rows.map((name, i) => spec.notes?.[i] ?? spec.notes?.[name] ?? DRUMS[name.toLowerCase()] ?? 36 + i)
     this.targets = this.rows.map((name, i) => (Array.isArray(spec.targets) ? spec.targets[i] : spec.targets?.[name]) ?? spec.target ?? null)
-    this.clock = [spec.clock, ...this.targets].find((thing) => method(thing, 'time')) || null
+    // The clock: a function that gives the time in seconds (a scene's soundTime), or the first thing given that has a time() of its own.
+    const timed = [spec.clock, ...this.targets].find((thing) => method(thing, 'time', 'soundTime'))
+    this.clock = typeof spec.clock === 'function' ? { time: spec.clock } : timed ? { time: method(timed, 'time', 'soundTime') } : null
     this.onStep = spec.onStep || null
     this.tempo = clamp(spec.tempo ?? 120, 30, 300)
     this.swing = clamp(spec.swing ?? 0, 0, 0.75)
@@ -5393,28 +5456,33 @@ class DrumSeq extends Control {
   }
 }
 
-/** The settings that go beside a pattern, each under the names a target may give it. One is made only for a setting the target has; the names are the engine's to settle, and this table is all that says them. */
+/** The settings that go beside a pattern, each under the names a target may give it (a synth's own first). One is made only for a setting the target has, and this table is all that says the names. */
 const BESIDE = {
-  gatePattern: [['rate', ['gate_rate', 'gateRate']], ['depth', ['gate_depth', 'gateDepth', 'gate']], ['smooth', ['gate_smooth', 'gate_smoothing', 'gateSmooth']], ['swing', ['gate_swing', 'gateSwing']]],
-  arpPattern: [['rate', ['arp_rate', 'arpRate']], ['order', ['arp_order', 'arp_mode', 'arpMode']], ['octaves', ['arp_octaves', 'arpOctaves']], ['length', ['arp_gate', 'arp_length', 'arpGate']], ['style', ['arp_style', 'arpStyle']]],
+  gatePattern: [['depth', ['gateDepth', 'gate.depth', 'gate_depth']], ['rate', ['gateRate', 'gate.rate', 'gate_rate']], ['smooth', ['gateSmooth', 'gate.smooth', 'gate_smooth']], ['swing', ['gateSwing', 'gate.swing', 'gate_swing']], ['sends', ['gateSends', 'gate.sends', 'gate_sends']], ['stereo', ['gateStereo', 'gate.stereo', 'gate_stereo']]],
+  arpPattern: [['rate', ['arpRate', 'arp_rate']], ['order', ['arpOrder', 'arp_order']], ['octaves', ['arpOctaves', 'arp_octaves']], ['length', ['arpGate', 'arp_gate']], ['style', ['arpStyle', 'arp_style']], ['swing', ['arpSwing', 'arp_swing']]],
 }
 /**
- * A pattern with its settings beside it, on one plate: the pattern, then a select for each setting
- * of the target that is a choice and a small dial for each that is a number, and for an arpeggio a
- * select of the patterns it can be set to by name. With no target, or `beside: false`, the pattern alone.
+ * A pattern with what goes with it beside it, on one plate: the pattern, a select of the patterns
+ * it can be set to by name, and for each setting of the target that goes with it a select (a
+ * choice), a switch (on or off) or a small dial (a number). With no target, or `beside: false`,
+ * the pattern alone.
  */
 function patterned(panel, kind, spec) {
   const target = spec.target, id = spec.id, sub = (name) => (id != null ? `${id}.${name}` : undefined)
-  const has = target && spec.beside !== false ? BESIDE[kind].map(([label, names]) => [label, names.find((name) => name !== spec.param && Object.keys(describe(target, name)).length)]).filter(([, name]) => name) : []
-  if (!has.length && !(kind === 'arpPattern' && target && spec.beside !== false)) return panel.add(kind, spec)
+  if (!target || spec.beside === false) return panel.add(kind, spec)
+  const has = BESIDE[kind].map(([label, names]) => [label, names.find((name) => name !== spec.param && Object.keys(describe(target, name)).length)]).filter(([, name]) => name)
   const box = panel.add('group', { label: spec.label, id: sub('plate') })
   let item
   box.enter()
   try {
     // (The plate has the name: the pattern on it needs none of its own.)
     item = panel.add(kind, { ...spec, label: undefined, bare: true })
-    if (kind === 'arpPattern') panel.add('select', { label: 'pattern', id: sub('preset'), choices: ['custom', ...Object.keys(ARP_PRESETS)], onChange: (name) => item.preset(name) })
-    for (const [label, name] of has) panel.add(describe(target, name).choices ? 'select' : 'dial', { label, target, param: name, size: 'small', id: sub(label) })
+    const names = Object.keys(item.presets)
+    if (names.length) panel.add('select', { label: 'pattern', id: sub('preset'), choices: ['yours', ...names], onChange: (name) => item.preset(name) })
+    for (const [label, name] of has) {
+      const d = describe(target, name)
+      panel.add(d.choices ? 'select' : d.kind === 'bool' ? 'toggle' : 'dial', { label, target, param: name, size: 'small', id: sub(label) })
+    }
   } finally { box.leave() }
   return item
 }

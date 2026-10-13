@@ -253,31 +253,37 @@ def test_a_grid_of_steps_pads_and_a_wheel_are_sent_and_heard():
     assert r["out"].strip() == "1 [] [('kick', 3, 1), ('on', 38), 'snare', ('off', 38)]"
 
 
-def test_patterns_are_lists_and_text_and_what_a_hand_draws_arrives_as_text():
+def test_patterns_are_lists_and_the_engines_text_and_what_a_hand_draws_arrives_as_text():
     r = start("""
         from pydials import *
-        pad = {"gate_pattern": "x.x."}
+        pad = {"gatePattern": "x.x."}
         lane = steps("accent", 8)
-        gate = gate_pattern("gate", "x.5.X..3")
+        gate = gate_pattern("gate", "x.5.9..3")
         tied = gate_pattern("tied", pad)
-        arp = arp_pattern("arp", "1 - 3 2 _ 1! 3~ 5^")
-        print(lane.value, gate.value, gate.text, len(gate), tied.text, arp.text, arp.value[4]["tie"], arp.value[7])
+        arp = arp_pattern("arp", "1 - 3 2 _ 1^ ~3 5':4")
+        named = arp_pattern("named", "acid")
+        print(lane.value, [round(v * 9) for v in gate.value], gate.text, len(gate), tied.text, arp.text, arp.value[4]["tie"], arp.value[7], named.text)
         def update(dt):
             lane.text = "x..X"
-            gate.put(1, 0.25)
+            gate.put(1, 3 / 9)
             lane.step = 2
+            arp.value = [1, 0, "2'", {"note": 3, "octave": -1, "accent": True, "length": 6}, "~4"]
+            tied.preset("pump")
             print(lane.value, lane.steps[3]["accent"], pad, arp.text, len(arp))
     """)
     assert r["error"] is None
     assert made(r) == [("steps", 1, {"steps": 8, "label": "accent", "value": "........"}),
-                       ("gatePattern", 2, {"value": "x.5.X..3", "label": "gate", "steps": 8}),
+                       ("gatePattern", 2, {"value": "x.5.x..3", "label": "gate", "steps": 8}),
                        ("gatePattern", 3, {"label": "tied", "value": "x.x.", "steps": 4}),
-                       ("arpPattern", 4, {"value": "1 - 3 2 _ 1! 3~ 5^", "label": "arp"})]
+                       ("arpPattern", 4, {"value": "1 - 3 2 _ 1^ ~3 5':4", "label": "arp"}),
+                       ("arpPattern", 5, {"value": "1^ 1 ~3 - 1' ~1 2^ -", "label": "named"})]
     lines = r["out"].splitlines()
-    assert lines[0] == "[0, 0, 0, 0, 0, 0, 0, 0] [1, 0, 0.5, 0, 1, 0, 0, 0.3] x.5.X..3 8 x.x. 1 - 3 2 _ 1! 3~ 5^ True {'note': 5, 'octave': 1, 'tie': False, 'accent': False, 'slide': False}"
-    assert sent(r, "set") == [[1, "value", "x..X"], [2, "value", "x35.X..3"], [1, "step", 2]]
+    assert lines[0] == ("[0, 0, 0, 0, 0, 0, 0, 0] [9, 0, 5, 0, 9, 0, 0, 3] x.5.x..3 8 x.x. 1 - 3 2 _ 1^ ~3 5':4 True "
+                        "{'note': 5, 'octave': 1, 'tie': False, 'accent': False, 'slide': False, 'length': 4} 1^ 1 ~3 - 1' ~1 2^ -")
+    assert sent(r, "set") == [[1, "value", "x..X"], [2, "value", "x35.x..3"], [1, "step", 2], [4, "value", "1 - 2' 3,^:6 ~4"], [3, "value", "2468246824682468"]]
+    assert lines[1] == "[1, 0, 0, 1] True {'gatePattern': '2468246824682468'} 1 - 2' 3,^:6 ~4 5"
     r = tick({"c": [3, "X..x", 4, "3 2 1"]})
-    assert r["out"].strip() == "[1, 0, 0, 1] True {'gate_pattern': 'X..x'} 3 2 1 3"
+    assert "{'gatePattern': '2468246824682468'}" in r["out"]         # update() has run again and set the name once more
 
 
 def test_a_drum_sequencer_is_worked_from_python_and_its_steps_are_heard():
