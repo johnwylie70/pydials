@@ -1,0 +1,3 @@
+include CHANGELOG.md
+# the tests need examples/ and conftest.py, which are not in the sdist
+prune tests
