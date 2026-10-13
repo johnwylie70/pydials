@@ -271,7 +271,9 @@ PLATES = """(() => {
   }
   const all = p.items.filter(shown)
   for (const c of all) if (c.x < 0 || c.y < 0 || c.x + c.w > p.W + 0.5 || (!c.view && c.y + c.h > p.H + 0.5)) wrong.push(c.label + ' is outside the picture')
-  for (const a of all) for (const b of all) if (a.id < b.id && a.x < b.x + b.w - 0.5 && b.x < a.x + a.w - 0.5 && a.y < b.y + b.h - 0.5 && b.y < a.y + a.h - 0.5) wrong.push(a.label + ' is over ' + b.label)
+  // (Of a control on plates that have been moved, only the part that is seen counts.)
+  const seen = (c) => { const v = c.view; if (!v) return c; const t = Math.max(c.y, v.y), b = Math.min(c.y + c.h, v.y + v.h); return b > t ? { x: c.x, y: t, w: c.w, h: b - t } : null }
+  for (const one of all) for (const other of all) { const a = seen(one), b = seen(other); if (a && b && one.id < other.id && a.x < b.x + b.w - 0.5 && b.x < a.x + a.w - 0.5 && a.y < b.y + b.h - 0.5 && b.y < a.y + a.h - 0.5) wrong.push(one.label + ' is over ' + other.label) }
   return { lines: lines.map((l) => l.titles), wrong, free: p.free.map(Math.round), tabs: p.tabs.map((t) => t.page.label), moved: !!p.viewport }
 })()""" % PANEL
 
@@ -489,3 +491,43 @@ def test_a_panel_of_a_set_size_keeps_its_proportions_on_a_phone_and_a_tablet(bro
         w.clean()
         w.page.close()
     assert all(abs(a - b) <= 1 for one, other in zip(*seen) for a, b in zip(one[1:], other[1:])) and len(seen[0]) > 12
+
+
+@pytest.mark.parametrize("size", [(615, 860), (1230, 1700), (560, 1100)])
+def test_the_owners_panel_on_his_tablet_keeps_its_scope_and_a_keyboard_tall_enough_to_play(browser, pyctures_run, tmp_path, size):
+    # Seven titled groups with a row() after each, a rotary for the wave and the kind of reverb, a large cutoff, a scope and a keyboard.
+    w = Watched(browser, pyctures_run(scene_file(tmp_path, LEAD + """
+label("oscillator"); rotary("wave", lead, "wave"); dial("width", lead, "width"); dial("sub", lead, "sub")
+row()
+label("pwm"); dial("amount", lead, "lfo2.pulse_width"); dial("speed", lead, "lfo2.rate")
+row()
+label("unison"); dial("voices", lead, "voices"); dial("detune", lead, "detune"); dial("spread", lead, "spread")
+row()
+label("filter"); select("filter", lead, "filter"); dial("cutoff", lead, "cutoff", size="large"); dial("resonance", lead, "resonance")
+row()
+label("shape"); dial("attack", lead, "attack"); dial("decay", lead, "decay"); dial("sustain", lead, "sustain"); dial("release", lead, "release")
+row()
+label("delay"); dial("amount", lead, "echo"); dial("time", lead, "delay.time"); dial("feedback", lead, "delay.feedback")
+row()
+label("reverb"); rotary("type", ["room", "hall", "plate", "cathedral", "spring"], "spring"); dial("amount", lead, "reverb"); dial("size", lead, "reverb.size"); dial("decay", lead, "reverb.decay")
+scope(lead)
+keyboard(lead, octave=3, octaves=2)
+""")).url, size=size, touch=True)
+    w.ready(30)
+    w.page.wait_for_timeout(900)
+    got = w.page.evaluate(PLATES)
+    assert got["wrong"] == []
+    # The scope is there and can be read; the keys are their full height; and the height is used from top to bottom.
+    u, scope, keys, view, top = w.page.evaluate("""(() => { const p = %s, by = (kind) => p.items.find((c) => c.kind === kind), s = by('scope'), k = by('keyboard'), v = p.viewport
+  return [p.u, [s.y, s.h, s.hidden], [k.y, k.h], v && [v.y, v.h], Math.min(...p.plates.map((plate) => plate[1]))] })()""" % PANEL)
+    assert not scope[2] and scope[1] >= 56 * u - 0.5
+    assert keys[1] >= 150 * u - 0.5
+    assert abs((keys[0] + keys[1] + 8 * u) - (size[1] - 10 * u)) < 1.5 and abs(keys[0] - 8 * u - 8 * u - (scope[0] + scope[1] + 8 * u)) < 1.5
+    if view:
+        assert abs(view[0] - 10 * u) < 1.5 and abs(scope[0] - 8 * u - 8 * u - (view[0] + view[1])) < 1.5
+    else:
+        assert abs(top - 10 * u) < 1.5
+    SHOTS.mkdir(exist_ok=True)
+    w.page.screenshot(path=str(SHOTS / ("owner_tablet_%d.png" % size[0])))
+    w.clean()
+    w.page.close()

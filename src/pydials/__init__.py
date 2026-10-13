@@ -370,6 +370,12 @@ class _Ranged(_Number, _Bound):
         for key in ("min", "max", "step", "unit", "log"):
             if spec.get(key) is None and d.get(key) is not None:
                 spec[key] = d[key]
+        # A value with a name of its own (0 that means "auto"), and where a dial turned by ratio from 0 starts.
+        labels = spec.get("labels") or d.get("labels")
+        if labels:
+            spec["labels"] = {str(at): str(name) for at, name in labels.items()}
+        if spec.get("logFrom") is None and d.get("log_from") is not None:
+            spec["logFrom"] = d["log_from"]
         if spec.get("step") is None and d.get("kind") == "int":
             spec["step"] = 1
         self.min = spec.get("min", 0) if spec.get("min") is not None else 0
@@ -853,23 +859,25 @@ def _options(**given):
 
 
 def dial(label=None, a=None, b=None, c=None, *, min=None, max=None, value=None, step=None, unit=None, log=None,
-         digits=None, default=None, x=None, y=None, size=None, share=None, span=None, colour=None, color=None,
+         log_from=None, labels=None, digits=None, default=None, x=None, y=None, size=None, share=None, span=None, colour=None, color=None,
          on_change=None):
     """A dial: dial("speed", 0, 10), dial("speed", 0, 10, 5) or dial("cutoff", lead, "filter_cutoff").
 
     size="small" or "large" (or how many points across); in a grid, span=2 covers two columns."""
-    return Dial(label, a, b, c, _options(min=min, max=max, value=value, step=step, unit=unit, log=log, digits=digits,
+    return Dial(label, a, b, c, _options(min=min, max=max, value=value, step=step, unit=unit, log=log, logFrom=log_from,
+                                         labels=labels, digits=digits,
                                          default=default, x=x, y=y, size=size, share=share, span=span, colour=colour,
                                          color=color, on_change=on_change))
 
 
 def slider(label=None, a=None, b=None, c=None, *, min=None, max=None, value=None, step=None, unit=None, log=None,
-           digits=None, default=None, vertical=None, x=None, y=None, size=None, share=None, span=None, colour=None,
+           log_from=None, labels=None, digits=None, default=None, vertical=None, x=None, y=None, size=None, share=None, span=None, colour=None,
            color=None, on_change=None):
     """A slider, across or (vertical=True) upright: slider("volume", 0, 1) or slider("attack", lead, "attack").
 
     share=1 gives it the room left over on its line."""
-    return Slider(label, a, b, c, _options(min=min, max=max, value=value, step=step, unit=unit, log=log, digits=digits,
+    return Slider(label, a, b, c, _options(min=min, max=max, value=value, step=step, unit=unit, log=log, logFrom=log_from,
+                                           labels=labels, digits=digits,
                                            default=default, vertical=vertical, x=x, y=y, size=size, share=share, span=span,
                                            colour=colour, color=color, on_change=on_change))
 

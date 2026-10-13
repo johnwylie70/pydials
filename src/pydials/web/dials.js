@@ -128,6 +128,8 @@ const unitOf = (unit) => UNITS[String(unit).toLowerCase()] ?? String(unit)
 function shown(value, c) {
   if (c.format) return String(c.format(value))
   if (typeof value !== 'number') return String(value)
+  // A value the target has a name for (0 that means "auto") is shown by its name.
+  if (c.labels) for (const at in c.labels) if (Math.abs(Number(at) - value) <= Math.abs(c.max - c.min) * 1e-9) return String(c.labels[at])
   let unit = c.unit || ''
   if (unit === 'Hz' && Math.abs(value) >= 1000) return `${(value / 1000).toFixed(Math.abs(value) >= 10000 ? 1 : 2)} kHz`
   const span = Math.abs(c.max - c.min)
@@ -226,6 +228,15 @@ class Ranged extends Control {
     // A pitch is turned by ratio, not by amount: half the dial is 20 to 200 Hz, not 20 to 10,000.
     this.log = this.min > 0 && this.max > this.min &&
       (spec.log ?? d.log ?? (d.curve === 'log' || (this.unit === 'Hz' && this.max / this.min >= 100)))
+    // Turned by ratio from 0: 0 is the bottom of the dial, and just above it the dial starts at `logFrom`
+    // (the smallest value worth turning to: a thousandth of the top, unless said) and goes on by ratio.
+    this.from = 0
+    if (this.min === 0 && this.max > 0 && (spec.log ?? d.log ?? d.curve === 'log')) {
+      this.log = true
+      this.from = spec.logFrom ?? d.logFrom ?? d.log_from ?? this.max / 1000
+    }
+    this.labels = spec.labels ?? d.labels ?? null
+    if (typeof d.format === 'function' && !this.format) this.format = d.format
   }
   /** The target says the setting is not what it was (another range, another unit): it is asked again. */
   refresh() {
@@ -243,9 +254,12 @@ class Ranged extends Control {
   }
   toPos(value) {
     if (this.max === this.min) return 0
+    if (this.from) return value < this.from ? (value <= 0 ? 0 : ZERO_PART * value / this.from) : ZERO_PART + (1 - ZERO_PART) * Math.log(value / this.from) / Math.log(this.max / this.from)
     return this.log ? Math.log(value / this.min) / Math.log(this.max / this.min) : (value - this.min) / (this.max - this.min)
   }
   fromPos(pos) {
+    // The first little part of the turn is 0 itself, so that 0 is easy to find and to stay on.
+    if (this.from) return pos < ZERO_PART ? 0 : this.from * Math.pow(this.max / this.from, (pos - ZERO_PART) / (1 - ZERO_PART))
     return this.log ? this.min * Math.pow(this.max / this.min, pos) : this.min + (this.max - this.min) * pos
   }
   get value() { return this.v }
@@ -287,6 +301,9 @@ class Ranged extends Control {
     this.touch()
   }
 }
+
+/** Of a dial turned by ratio from 0, this much of the turn at the bottom is 0 itself. */
+const ZERO_PART = 0.04
 
 /** A size given as a number, or by name. */
 const sized = (size, small, usual, large) => (typeof size === 'number' ? (size <= SIZE_TIMES ? usual * size : size) : size === 'small' ? small : size === 'large' ? large : usual)
@@ -608,7 +625,8 @@ class Rotary extends Select {
       for (const choice of this.choices) this.side = Math.max(this.side, g.measureText(String(choice)).width)
       this.side = Math.min(this.side, this.nameRoom * u) + 8 * u
     }
-    return [Math.max(76 * u, across + 26 * u + 2 * this.side), across + 50 * u + (this.named ? 22 * u : 0)]
+    // With the names round it, the one it is on is lit there: it is not written again underneath.
+    return [Math.max(76 * u, across + 26 * u + 2 * this.side), across + (this.named ? 60 : 50) * u]
   }
   /** Where notch i is round the knob: an angle, from lower left round the top to lower right. */
   angle(i) {
@@ -616,7 +634,7 @@ class Rotary extends Select {
     return TAU * 0.375 + TAU * 0.75 * (n > 1 ? i / (n - 1) : 0.5)
   }
   /** The middle of the knob: a little lower when names are written round it, to leave room for the one at the top. */
-  centre(u) { return [this.x + this.w / 2, this.y + (this.named ? 26 : 20) * u + (this.h - (this.named ? 46 : 40) * u) / 2] }
+  centre(u) { return [this.x + this.w / 2, this.y + (this.named ? 28 : 20) * u + (this.h - (this.named ? 42 : 40) * u) / 2] }
   go(i) {
     i = clamp(i, 0, this.choices.length - 1)
     if (i === this.i) return
@@ -691,7 +709,7 @@ class Rotary extends Select {
     g.moveTo(cx + Math.cos(a) * (r - 18 * u), cy + Math.sin(a) * (r - 18 * u))
     g.lineTo(cx + Math.cos(a) * (r - 9 * u), cy + Math.sin(a) * (r - 9 * u))
     g.stroke()
-    words(g, String(this.value ?? ''), cx, this.y + this.h - 11 * u, 12 * u, THEME.text, 'center', '600', this.w - 6 * u)
+    if (!this.named) words(g, String(this.value ?? ''), cx, this.y + this.h - 11 * u, 12 * u, THEME.text, 'center', '600', this.w - 6 * u)
   }
 }
 
@@ -734,6 +752,19 @@ const KEY_NOTES = { KeyA: 0, KeyW: 1, KeyS: 2, KeyE: 3, KeyD: 4, KeyF: 5, KeyT: 
 const KEY_HINTS = ['A', 'W', 'S', 'E', 'D', 'F', 'T', 'G', 'Y', 'H', 'U', 'J', 'K', 'O', 'L', 'P', ';', "'"]
 const WHITE = [0, 2, 4, 5, 7, 9, 11]
 const IS_BLACK = [0, 1, 0, 1, 0, 0, 1, 0, 1, 0, 1, 0]
+/**
+ * THE KEYBOARD IS THE INSTRUMENT: it is this tall, in points, and is the last thing to give way. Only where the
+ * plates above it could hardly be seen (a phone on its side) is it KEYS_LEAST; on a panel with height to
+ * spare it is as much as KEYS_MOST. `keyboard(lead, { height })` is kept to, whatever the room.
+ */
+const KEYS_TALL = 150
+const KEYS_LEAST = 116
+const KEYS_MOST = 190
+/** A scope made outside any group is this tall; short of room, no less than SCOPE_LEAST, which is still tall enough to read a wave. */
+const SCOPE_TALL = 104
+const SCOPE_LEAST = 56
+/** A picture shorter than this, in points, is a phone on its side: only there may the scope be put away altogether. */
+const SHORT_VIEW = 480
 /** A white key is never narrower than this, in points: with a mouse, and under a finger. Fewer octaves are shown instead. */
 const KEY_LEAST = 14
 const KEY_LEAST_FINGER = 22
@@ -801,7 +832,7 @@ class Keyboard extends Control {
   }
   natural(u, room) {
     // Short of room, it gives up some of its height before the controls above it have to be moved to be seen.
-    if (!this.box || this.at) return [this.wide ? this.wide * u : room, (this.tall || (this.at ? 150 : [150, 116, 96][this.panel.squeeze || 0])) * u]
+    if (!this.box || this.at) return [this.wide ? this.wide * u : room, (this.tall || (this.at ? KEYS_TALL : (this.panel.squeeze >= 2 ? KEYS_LEAST : KEYS_TALL) + (this.panel.keysMore || 0))) * u]
     return [this.wide ? this.wide * u : Math.min(room, 7 * 30 * (this.octaves || 2) * u), (this.tall || 130) * u]
   }
   stretch() { return this.wide || !this.box ? [1, 1] : [0.6, Infinity] }
@@ -1018,7 +1049,7 @@ class Scope extends Control {
   feed(list) { this.list = list; this.fresh = true }
   natural(u, room) {
     // Made outside any group it is as wide as the picture; when there is more than fits, it gives up height first.
-    const tall = (this.tall || (this.full && this.panel.squeeze ? 64 : 104)) * u
+    const tall = (this.tall || (this.full && this.panel.squeeze ? SCOPE_LEAST : SCOPE_TALL)) * u
     if (this.wide) return [this.wide * u, tall]
     return [this.full || this.at ? room : Math.min(room, 220 * u), tall]
   }
@@ -1434,6 +1465,8 @@ class Panel {
         Panel.edges = document.createElement('div')
         Panel.edges.style.cssText = 'position:fixed;inset:0;visibility:hidden;pointer-events:none;padding:env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px)'
       }
+      // A page inside another's frame is told of the screen's edges though it may be nowhere near them: it keeps none.
+      if (window.top !== window) return [0, 0, 0, 0]
       if (!Panel.edges.isConnected) document.documentElement.append(Panel.edges)
       const kept = getComputedStyle(Panel.edges), box = this.canvas.getBoundingClientRect()
       const part = (name, gone) => Math.max(0, (parseFloat(kept[name]) || 0) - Math.max(0, gone))
@@ -1956,7 +1989,7 @@ class Panel {
     const k = this.k = { u, compact, pad: (compact ? 5 : 8) * u, gap: (compact ? 5 : 8) * u, title: (compact ? 18 : 22) * u }
     const margin = options.margin * u
     this.plates = []; this.titles = []; this.rules = []; this.tabs = []
-    this.viewport = null; this.viewNow = null; this.wraps = 0; this.lines = 0; this.over = 0; this.widest = 0
+    this.viewport = null; this.viewNow = null; this.wraps = 0; this.lines = 0; this.over = 0; this.widest = 0; this.spare = 0
     this.hold = options.wrap === false || (options.fit === 'width' && !set)
     this.columnsNow = this.columnsAt(W)
     for (const item of this.items) { item.hidden = false; item.view = null }
@@ -1983,7 +2016,8 @@ class Panel {
       const room = Math.max(40, R.w - 2 * k.pad)
       const [, h] = item.natural(item.u, room, g)
       item.w = room
-      item.h = Math.min(h, Math.max(70 * u, H * 0.42))
+      // No more than four tenths of the height (a phone on its side), unless the scene said how tall.
+      item.h = item.tall ? h : Math.min(h, Math.max(70 * u, H * 0.42))
       item.x = R.x + k.pad
       item.y = R.y + R.h - k.pad - item.h
       this.plates.push([R.x, item.y - k.pad, R.w, item.h + 2 * k.pad])
@@ -2016,7 +2050,7 @@ class Panel {
       if (kids.slice(0, cut).some((kid) => !isBreak(kid))) { body = kids.slice(0, cut); foot = kids.slice(cut) }
     }
     // With very little height (a phone on its side) that scope is put away, so that the controls can be seen.
-    if (this.squeeze >= 2) {
+    if (this.squeeze >= 3) {
       for (const kid of foot) if (kid.full) this.hide(kid)
       foot = foot.filter((kid) => !kid.full)
     }
@@ -2074,11 +2108,16 @@ class Panel {
       // Below the plates when everything fits; held at the bottom when the plates are moved or turned. On a scene
       // that draws nothing of its own (a panel) it is held just above the keyboard, and takes the height left over,
       // so far: there is no dead room between the scope and the keys.
-      const panel = fits && this.blank && options.at !== 'bottom' && free.b < H && below.lines.some((line) => line.wide)
+      // A scope that was made shorter to fit is given back whatever height is left, up to its own.
+      const scoped = below.lines.some((line) => line.wide)
+      const panel = fits && scoped && options.at !== 'bottom' && ((this.blank && free.b < H) || this.squeeze > 0)
       if (panel) {
-        const last = below.lines.at(-1), more = Math.max(0, Math.min(F.h - need, Math.max(last.h * 1.5, F.h * 0.22) - last.h))
+        const last = below.lines.at(-1), own = SCOPE_TALL * u + 2 * k.pad
+        const most = this.blank && free.b < H ? Math.max(own * 1.5, F.h * 0.22) : own
+        const more = Math.max(0, Math.min(F.h - need, most - last.h))
         last.h += more
         below.h += more
+        this.spare = Math.max(0, F.h - need - more)
       }
       const held = pages.length || !fits || options.at === 'bottom' || panel
       const by = held ? F.y + F.h - below.h : y
@@ -2086,6 +2125,7 @@ class Panel {
       end = held ? F.y + F.h : by + below.h + k.gap
       if (held && options.at !== 'bottom') { free.b = Math.min(free.b, by - k.gap); end = y }
     }
+    if (fits && !below.h) this.spare = Math.max(0, F.h - need)
     if (need > 0) {
       if (side) { if (options.at === 'left') free.l = F.x + F.w + k.gap; else free.r = F.x - k.gap }
       else if (options.at === 'bottom') free.b = Math.min(free.b, top - k.gap)
@@ -2177,13 +2217,15 @@ class Panel {
       }
       // Of the sizes at which all fits, the one that makes the fewest lines (a row stays a row if a little
       // smaller will keep it one), and of those the biggest. If none does, the same again with the keyboard
-      // and the scope above it less tall, and then with that scope put away. Told not to wrap, there is one
-      // size to try: the usual one, made as much smaller as the widest row needs.
+      // and the scope above it less tall. Told not to wrap, each size is first made as much smaller as the
+      // widest row needs.
       const sizes = []
-      if (!hold) for (let step = 0; usual * (1 - 0.05 * step) > least + 1e-6; step++) sizes.push(usual * (1 - 0.05 * step))
-      sizes.push(hold ? usual : least)
+      for (let step = 0; usual * (1 - 0.05 * step) > least + 1e-6; step++) sizes.push(usual * (1 - 0.05 * step))
+      sizes.push(least)
       u = 0
-      for (squeeze of [0, 1, 2]) {
+      this.keysMore = 0
+      // (The scope may be made shorter to fit, as far as SCOPE_LEAST; the keyboard is not.)
+      for (squeeze of [0, 1]) {
         this.squeeze = squeeze
         let fewest = Infinity
         for (let size of sizes) {
@@ -2194,11 +2236,18 @@ class Panel {
         if (u) break
       }
       if (!u) {
-        // Nothing fits: the plates will be moved to be seen. The scope stays if that leaves room to see a plate and a half.
+        // NOTHING FITS: THE PLATES ARE MOVED TO BE SEEN, under a scope and a keyboard that stay where they are.
+        // The scope is at its least height. Only if that leaves hardly any room to see the plates in does the
+        // keyboard give up some of its height; and only on a picture as short as a phone on its side is the
+        // scope then put away, which is said once.
         this.squeeze = squeeze = 1
         u = hold ? narrowed(usual, true) : Math.max(least, usual * 0.9)
         this.compose(u, 0)
-        if (this.seen < SEEN_LEAST) squeeze = 2
+        if (this.seen < SEEN_LEAST) { this.squeeze = squeeze = 2; this.compose(u, 0) }
+        if (this.seen < SEEN_LEAST && this.H < SHORT_VIEW && this.items.some((item) => item.full && item.kind === 'scope')) {
+          squeeze = 3
+          if (!this.saidAway) { this.saidAway = true; console.info('dials: there is too little height here for the scope, so it is put away to leave room for the controls') }
+        }
       }
       this.squeeze = squeeze
       // A group told not to wrap, in a panel that otherwise may: the same one scale, found the same way.
@@ -2215,7 +2264,10 @@ class Panel {
     }
     this.scale = u
     this.squeeze = squeeze || 0
-    if (!this.compose(u, 0).fits) this.compose(u, (this.coarse ? 18 : 12) * u)
+    if (!this.compose(u, 0).fits) { this.compose(u, (this.coarse ? 18 : 12) * u); return }
+    // Height still to spare on a panel, after the scope has had its part: the keyboard has it, up to KEYS_MOST.
+    if (!quick) this.keysMore = this.blank && this.spare > u ? Math.min(KEYS_MOST - KEYS_TALL, this.spare / u) : 0
+    if (this.keysMore) this.compose(u, 0)
   }
   /** What the layout came to: the picture's width and height, the scale the controls are drawn at, and how many plates to a line were asked for. */
   info() {

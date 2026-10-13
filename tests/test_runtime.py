@@ -380,6 +380,21 @@ def test_layout_says_the_size_and_scale_the_page_last_told_and_on_resize_is_call
     assert tick({"f": [0, 140, 800, 160, 800, 300, 1]})["out"].strip().endswith("800 300 1 [(400, 300, 0.9), (800, 300, 1)]")
 
 
+def test_a_value_with_a_name_and_a_dial_turned_by_ratio_from_nothing_are_said_to_the_page():
+    r = start("""
+        from pydials import *
+        class Verb:
+            decay = 0
+            def describe(self, name): return {"min": 0, "max": 20, "unit": "s", "log": True, "log_from": 0.05, "labels": {0: "auto"}}
+        dial("decay", Verb(), "decay")
+        dial("gain", 0, 10, log=True, log_from=0.1, labels={10: "full"})
+    """)
+    assert r["error"] is None
+    first, second = [m[2] for m in made(r)]
+    assert first["labels"] == {"$d": {"0": "auto"}} and first["logFrom"] == 0.05 and first["log"] is True and first["min"] == 0
+    assert second["labels"] == {"$d": {"10": "full"}} and second["logFrom"] == 0.1
+
+
 def test_each_run_starts_with_no_controls_and_a_page_of_its_own():
     first = start("from pydials import *\ndial('a', 0, 1)\ndial('b', 0, 1)")
     second = start("from pydials import *\ndial('c', 0, 1)")
