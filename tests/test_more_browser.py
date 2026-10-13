@@ -36,3 +36,31 @@ def update(dt):
     w.wait("JSON.stringify(window.result[2]) === '[\"enter Ada L\"]' && !document.querySelector('input[data-dials-typing]')")
     w.clean()
     w.page.close()
+
+
+def test_a_box_is_ticked_a_choice_is_made_and_a_list_is_opened_and_picked_from(browser, pyctures_run, tmp_path):
+    w = Watched(browser, pyctures_run(scene_file(tmp_path, """
+from pyctures import *
+from pydials import *
+
+sound = checkbox("sound")
+mode = choose("mode", ["easy", "medium", "hard"])
+size = radio("size", ["small", "medium", "large"])
+planet = dropdown("planet", ["Mercury", "Venus", "Earth", "Mars"], "Earth")
+
+def update(dt):
+    js.result = [bool(sound), mode.value, size.index, planet.value]
+""")).url)
+    w.ready(4)
+    w.wait("JSON.stringify(window.result) === '[false,\"easy\",0,\"Earth\"]'")
+    w.page.mouse.click(*w.spot(0))
+    w.page.mouse.click(*w.spot(1, 5 / 6, 0.7))                  # the third of three, side by side
+    w.page.mouse.click(*w.spot(2, 0.5, 0.86))                   # the last of three, one under another
+    w.page.mouse.click(*w.spot(3, 0.5, 0.65))
+    w.wait("%s.popup.w > 0" % PANEL)                           # the list is open, and has been drawn
+    # The list's first line: Mercury.
+    x, y = w.page.evaluate("(() => { const c = document.querySelector('[data-pyctures-src] canvas'), l = c[Symbol.for('dials.panel')].popup, b = c.getBoundingClientRect(); return [b.left + l.x + l.w / 2, b.top + l.y + 24 * l.u - l.scroll] })()")
+    w.page.mouse.click(x, y)
+    w.wait("JSON.stringify(window.result) === '[true,\"hard\",2,\"Mercury\"]' && !%s.popup" % PANEL)
+    w.clean()
+    w.page.close()

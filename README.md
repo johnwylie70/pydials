@@ -381,9 +381,24 @@ def draw():
 | `text_box(label, text)` | One line of text. Tap it and type: Enter keeps what you typed, Escape puts back what was there. `name.value` is the text. Options: `placeholder`, `max` (letters), `width`, `on_change(text)` (as each letter is typed; Python hears it a frame later), `on_enter(text)`. `text_box(label, target, "setting")` ties it to a setting. |
 | `readout(label, lambda: value)` | Shows a value or a message, and takes no hand. Give it a function (asked every frame), a target and a setting, or nothing: then `score.value = 12` says what it shows. Options: `unit`, `digits`, `size=` (`"large"` for a score), `format="clock"` (65 is 1:05) or a function that makes the words. |
 
+![Two checkboxes, three choices side by side with the middle one lit, three one under another, and a dropdown with its list of planets open](docs/images/checkbox-choose-dropdown.png)
+
+```python
+sound = checkbox("sound", True)                             # if sound: …
+mode = choose("mode", ["easy", "medium", "hard"])           # mode.value, mode.index
+planet = dropdown("planet", ["Mercury", "Venus", "Earth", "Mars", "Jupiter", "Saturn"], "Earth")
+```
+
+| | |
+|---|---|
+| `checkbox(label, on)` | A box that is ticked, with its label beside it. `sound.on` is True or False, as a toggle's is. `checkbox(label, target, "setting")` ties it to a setting. |
+| `choose(label, choices, start)` | One of a few, all in sight side by side: tap one, or slide a finger across them. `mode.value` is the choice and `mode.index` its place. Where they do not fit on one line they take two. `choose(label, target, "setting")` takes the choices from the target. |
+| `radio(label, choices, start)` | The same, one under another with a round mark each. |
+| `dropdown(label, choices, start)` | One of a long list. A tap opens the whole list over the controls; a long one is moved with a finger or the wheel; it closes on a pick or a touch outside it. |
+
 **Typing.** A canvas cannot be typed into, so while you type a real box for text lies over the control: your device's own keyboard, caret, selection and paste all work. On a phone or tablet the keyboard comes up when your finger lifts, and a number asks for the number keys. What you type goes to the box and not to the scene's `keys`. It works the same when the picture is drawn smaller or larger, when the page is scrolled, and when the scene is shut inside a frame (as a preview's is): nothing is asked of the page around it.
 
-**Keys.** The control you touched last takes the arrow keys: on a number box they step it (Shift ten at a time, Home and End go to the ends, Enter types). Tab goes to the next control that takes keys.
+**Keys.** The control you touched last takes the arrow keys: on a number box they step it (Shift ten at a time, Home and End go to the ends, Enter types). Space ticks a checkbox, the arrows move among choices, and on a dropdown Enter opens the list, the arrows move through it, Enter picks and Escape closes. Tab goes to the next control that takes keys.
 
 ## Targets
 

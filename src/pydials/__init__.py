@@ -1096,7 +1096,7 @@ def theme(**colours):
 # Each kind below is made in the page by one command, as the ones above are. They are in the order of
 # the README: for any program, for games, for music.
 
-__all__ += ["number", "stepper", "text_box", "readout"]
+__all__ += ["number", "stepper", "text_box", "readout", "checkbox", "choose", "radio", "dropdown"]
 
 
 class Number(_Ranged):
@@ -1263,3 +1263,57 @@ def readout(label="", source=None, setting=None, *, value=None, unit=None, digit
     minutes and seconds, and format= may be a function that makes the words; unit= and digits= are for a number."""
     return Readout(source, setting, _options(label=label, value=value, unit=unit, digits=digits, format=format, size=size,
                                              width=width, x=x, y=y, share=share, span=span, colour=colour, color=color))
+
+
+class Checkbox(Toggle):
+    """A box that is ticked. `on` (or `value`) is True or False."""
+    kind = "checkbox"
+
+
+class Choose(Select):
+    """One of a few, side by side. `value` is the choice, `index` its place in the list."""
+    kind = "choose"
+
+
+class Radio(Select):
+    """One of a few, one under another. `value` is the choice, `index` its place in the list."""
+    kind = "radio"
+
+
+class Dropdown(Select):
+    """One of a long list, which opens over the controls. `value` is the choice, `index` its place in the list."""
+    kind = "dropdown"
+
+
+def checkbox(label="", a=None, b=None, *, value=None, x=None, y=None, share=None, span=None, colour=None, color=None,
+             on_change=None):
+    """A box that is ticked: `sound = checkbox("sound", True)`, then `if sound:`; checkbox("sync", lead, "sync")."""
+    return Checkbox(label, a, b, _options(value=value, x=x, y=y, share=share, span=span, colour=colour, color=color,
+                                          on_change=on_change))
+
+
+def _chosen(kind, label, a, b, value, x, y, share, span, colour, color, on_change):
+    return kind(label, a, b, _options(value=value, x=x, y=y, share=share, span=span, colour=colour, color=color,
+                                      on_change=on_change))
+
+
+def choose(label="", a=None, b=None, *, value=None, x=None, y=None, share=None, span=None, colour=None, color=None,
+           on_change=None):
+    """One of a few, all in sight side by side: `mode = choose("mode", ["easy", "medium", "hard"], "medium")`.
+
+    `mode.value` is the choice and `mode.index` its place; choose("wave", lead, "wave") is a setting that has
+    choices. Where they do not fit on one line they take two."""
+    return _chosen(Choose, label, a, b, value, x, y, share, span, colour, color, on_change)
+
+
+def radio(label="", a=None, b=None, *, value=None, x=None, y=None, share=None, span=None, colour=None, color=None,
+          on_change=None):
+    """One of a few, one under another with a round mark each: radio("size", ["small", "medium", "large"])."""
+    return _chosen(Radio, label, a, b, value, x, y, share, span, colour, color, on_change)
+
+
+def dropdown(label="", a=None, b=None, *, value=None, x=None, y=None, share=None, span=None, colour=None, color=None,
+             on_change=None):
+    """One of a long list: dropdown("planet", planets, "Earth"). A tap opens the list over the controls; it is
+    moved with a finger or the wheel when it is long, and closes on a pick or a touch outside it."""
+    return _chosen(Dropdown, label, a, b, value, x, y, share, span, colour, color, on_change)

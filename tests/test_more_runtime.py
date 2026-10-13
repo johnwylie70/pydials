@@ -81,3 +81,27 @@ def test_a_readout_is_sent_what_it_shows_only_when_that_changes():
     # The function is asked with each frame the page calls back for.
     r = tick({"b": 1})
     assert sent(r, "set") == [[1, "value", 8]]
+
+
+def test_a_checkbox_is_true_or_false_and_choose_radio_and_dropdown_are_one_of_a_list():
+    r = start("""
+        from pydials import *
+        heard = []
+        sound = checkbox("sound", True, on_change=heard.append)
+        mode = choose("mode", ["easy", "medium", "hard"], "medium", on_change=heard.append)
+        size = radio("size", ["small", "large"])
+        planet = dropdown("planet", ["Mercury", "Venus", "Earth"], "Earth")
+        print(bool(sound), mode.value, mode.index, size.value, planet.value, mode == "medium")
+        def update(dt):
+            planet.value = "Venus"
+            print(sound.on, mode.value, size.index, heard)
+    """)
+    assert r["error"] is None
+    assert made(r) == [("checkbox", 1, {"value": True, "label": "sound"}),
+                       ("choose", 2, {"value": "medium", "label": "mode", "choices": ["easy", "medium", "hard"]}),
+                       ("radio", 3, {"label": "size", "choices": ["small", "large"], "value": "small"}),
+                       ("dropdown", 4, {"value": "Earth", "label": "planet", "choices": ["Mercury", "Venus", "Earth"]})]
+    assert out(r)[:6] == ["True", "medium", "1", "small", "Earth", "True"]
+    assert sent(r, "set") == [[4, "index", 1]]
+    r = tick({"c": [1, False, 2, 2, 3, 1]})
+    assert r["out"].strip() == "False hard 1 [False, 'hard']"
