@@ -166,3 +166,36 @@ def update(dt):
     w.wait("JSON.stringify(window.result) === '[[0,0,0,1,0,0,0,0],[],[\"snare\"],2]'")
     w.clean()
     w.page.close()
+
+
+def test_a_gate_is_drawn_and_a_drum_sequencer_plays_a_thing_in_the_page_by_itself(browser, pyctures_run, tmp_path):
+    w = Watched(browser, pyctures_run(scene_file(tmp_path, """
+from pyctures import *
+from pydials import *
+
+# A thing in the page that can be played, and keeps a gate's pattern as text, as a synth would.
+kit = js.Function('return { log: [], gate_pattern: "x.x.", get(name) { return this[name] }, set(name, value) { this[name] = value }, describe(name) { return name === "gate_pattern" ? { kind: "pattern" } : undefined }, noteOn(note, velocity) { this.log.push(note) }, noteOff(note) {} }')()
+js.kit = kit
+heard = []
+gate = gate_pattern("gate", kit)
+beat = drum_seq("beat", ["kick", "snare"], kit, steps=8, tempo=240, value=["x.x.x.x.", "....X..."],
+                on_step=lambda drum, step, velocity: heard.append(drum))
+
+def update(dt):
+    js.result = [gate.text, beat.playing, beat.step >= 0, "kick" in heard and "snare" in heard, beat.tempo]
+""")).url)
+    w.ready(2)
+    w.wait("JSON.stringify(window.result) === '[\"x.x.\",false,false,false,240]'")
+    gate = "document.querySelector('[data-pyctures-src] canvas')[Symbol.for('dials.panel')].items.find((c) => c.kind === 'gatePattern')"
+    seq = "document.querySelector('[data-pyctures-src] canvas')[Symbol.for('dials.panel')].items.find((c) => c.kind === 'drumSeq')"
+    # The gate's second bar, tapped on: the thing in the page and Python both have the new pattern.
+    x, y = w.page.evaluate("(() => { const g = %s, c = g.spotOf(1, g.u), b = document.querySelector('[data-pyctures-src] canvas').getBoundingClientRect(); return [b.left + c.x + c.w / 2, b.top + c.y + c.h / 2] })()" % gate)
+    w.page.mouse.click(x, y)
+    w.wait("window.result[0] === 'xxx.' && window.kit.gate_pattern === 'xxx.'")
+    x, y = w.page.evaluate("(() => { const s = %s, p = s.parts(s.u).play, b = document.querySelector('[data-pyctures-src] canvas').getBoundingClientRect(); return [b.left + p.x + p.w / 2, b.top + p.y + p.h / 2] })()" % seq)
+    w.page.mouse.click(x, y)                                    # play: the page plays the kit, and Python hears each step
+    w.wait("window.result[1] && window.result[2] && window.result[3] && window.kit.log.includes(36) && window.kit.log.includes(38)")
+    w.page.mouse.click(x, y)
+    w.wait("!window.result[1] && !window.result[2]")
+    w.clean()
+    w.page.close()

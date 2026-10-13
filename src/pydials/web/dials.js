@@ -2640,6 +2640,7 @@ class Panel {
 
 SPELLING.on_enter = 'onEnter'
 SPELLING.as_keys = 'asKeys'
+SPELLING.on_step = 'onStep'
 
 /**
  * THE KEYS go to the control that was touched last. `on` says what each key it knows does (it is
@@ -4426,6 +4427,483 @@ class Envelope extends Control {
   }
 }
 
+// --- patterns: rows of steps, as lists and as text
+/**
+ * A PATTERN AS TEXT, so that it can be saved, pasted into a scene's code and handed to a target
+ * that keeps its pattern that way. The marks are these two tables and nothing else: change a mark
+ * here and every control reads and writes the new one.
+ *
+ *   steps (a gate, a drum's row, a lane):  one mark a step.  . off   x on   X on, with an accent
+ *                                          1 to 9: on, at that many tenths.  Spaces and | are for the eye.
+ *   an arpeggio:  words with spaces between.  1 2 3: that note of the chord (1 is its root)   - a rest
+ *                 _ the note before, held on   after a note: ^ an octave up (v down)   ! an accent   ~ a slide
+ */
+const STEP_MARKS = { off: '.', on: 'x', accent: 'X', skipped: ' |' }
+const ARP_MARKS = { rest: '-', tie: '_', up: '^', down: 'v', accent: '!', slide: '~' }
+
+function stepsFromText(text) {
+  const steps = []
+  for (const mark of String(text)) {
+    if (STEP_MARKS.skipped.includes(mark)) continue
+    if (mark >= '1' && mark <= '9') steps.push({ level: Number(mark) / 10, accent: false })
+    else steps.push({ level: mark === STEP_MARKS.off ? 0 : 1, accent: mark === STEP_MARKS.accent })
+  }
+  return steps
+}
+function stepsToText(steps) {
+  return steps.map((s) => (!(s.level > 0) ? STEP_MARKS.off : s.accent ? STEP_MARKS.accent : s.level >= 0.95 ? STEP_MARKS.on : String(clamp(Math.round(s.level * 10), 1, 9)))).join('')
+}
+function arpFromText(text) {
+  return String(text).trim().split(/\s+/).filter(Boolean).map((word) => {
+    const step = { note: 0, octave: 0, tie: word[0] === ARP_MARKS.tie, accent: false, slide: false }
+    step.note = parseInt(word, 10) || 0
+    for (const mark of word.replace(/^\d+/, '')) {
+      if (mark === ARP_MARKS.up) step.octave++
+      else if (mark === ARP_MARKS.down) step.octave--
+      else if (mark === ARP_MARKS.accent) step.accent = true
+      else if (mark === ARP_MARKS.slide) step.slide = true
+    }
+    return step
+  })
+}
+function arpToText(steps) {
+  return steps.map((s) => (s.tie ? ARP_MARKS.tie : !s.note ? ARP_MARKS.rest : s.note + (s.octave > 0 ? ARP_MARKS.up.repeat(s.octave) : ARP_MARKS.down.repeat(-s.octave || 0))) + (s.note || s.tie ? (s.accent ? ARP_MARKS.accent : '') + (s.slide ? ARP_MARKS.slide : '') : '')).join(' ')
+}
+
+/**
+ * ONE ROW OF STEPS: what a gate, a drum's row, a row of a grid and a lane of accents all are. Each
+ * step is off or on at a level from 0 to 1, and may have an accent; `length` of them are in use.
+ * It keeps the steps and knows what a finger does to them, and each control that has rows says
+ * where they are drawn.
+ *
+ *   bars       each step is a bar as tall as its level: a finger sets the level by how high it is,
+ *              and dragged across draws a line of levels
+ *   accents    a drag up on a step gives it an accent, and down takes it away
+ *   velocity   a drag up or down on a step says how hard, 0 to 1
+ */
+class Lane {
+  constructor(most, length, how = {}) {
+    this.most = most
+    this.length = clamp(length, 1, most)
+    this.bars = !!how.bars
+    this.accents = !!how.accents
+    this.velocity = !!how.velocity
+    this.level = new Array(most).fill(0)
+    this.accent = new Array(most).fill(false)
+    this.stroke = null
+  }
+  /** The steps in use, each { on, level, accent }. */
+  get steps() { return this.level.slice(0, this.length).map((level, i) => ({ on: level > 0, level, accent: this.accent[i] })) }
+  get levels() { return this.level.slice(0, this.length) }
+  get text() { return stepsToText(this.steps) }
+  /** Take a whole row: text, or a list of numbers, of true and false, or of steps. `fit`: its length becomes the row's. */
+  take(row, fit) {
+    const steps = typeof row === 'string' ? stepsFromText(row) : [...(row || [])].map((s) => (s != null && typeof s === 'object' ? { level: s.level ?? (s.on === false ? 0 : 1), accent: !!s.accent } : { level: s === true ? 1 : clamp(Number(s) || 0, 0, 1), accent: false }))
+    if (fit && steps.length) this.length = clamp(steps.length, 1, this.most)
+    for (let i = 0; i < this.most; i++) { this.level[i] = steps[i]?.level || 0; this.accent[i] = !!steps[i]?.accent && this.level[i] > 0 }
+  }
+  put(i, level, accent) {
+    if (!(i >= 0 && i < this.most)) return false
+    level = level === true ? 1 : clamp(Number(level) || 0, 0, 1)
+    accent = level > 0 && (accent ?? this.accent[i])
+    if (this.level[i] === level && this.accent[i] === accent) return false
+    this.level[i] = level; this.accent[i] = accent
+    return true
+  }
+  /** A level from where a finger is in a step: `down` is 0 at its top and 1 at its bottom. */
+  high(down) { const level = Math.round((1 - down) * 20) / 20; return level < 0.08 ? 0 : clamp(level, 0, 1) }
+  /** A finger lands on step i, `down` of the way down it. Each of these three says whether anything changed. */
+  begin(i, down) {
+    this.stroke = { first: i, down, was: this.level[i], moved: false, paint: this.level[i] ? 0 : 1 }
+    if (this.bars) return this.level[i] ? false : this.put(i, 1, false)
+    return this.put(i, this.stroke.paint, false)
+  }
+  drag(i, down) {
+    const s = this.stroke
+    if (!s) return false
+    if (this.bars) {
+      if (i === s.first && !s.moved && Math.abs(down - s.down) < 0.12) return false
+      s.moved = true
+      return this.put(i, this.high(down), false)
+    }
+    if (i !== s.first) { s.moved = true; return this.put(i, s.paint, false) }
+    if (!s.paint || s.moved) return false
+    const up = s.down - down
+    if (this.accents && Math.abs(up) > 0.4) return this.put(i, 1, up > 0)
+    if (this.velocity && Math.abs(up) > 0.15) return this.put(i, clamp(Math.round((up > 0 ? 1 : 1 + up / 2) * 20) / 20, 0.1, 1), false)
+    return false
+  }
+  end() {
+    const s = this.stroke
+    this.stroke = null
+    // A tap on a bar that was up puts it down.
+    return !!s && this.bars && !s.moved && s.was > 0 && this.put(s.first, 0)
+  }
+  /** Draw step i in a box. `now`: it is the one sounding. Past the length in use it is drawn faint. */
+  drawStep(g, x, y, w, h, u, i, colour, now) {
+    const level = this.level[i], gap = Math.min(2 * u, w * 0.08), used = i < this.length
+    g.globalAlpha = used ? 1 : 0.35
+    rounded(g, x + gap, y + gap, w - 2 * gap, h - 2 * gap, 5 * u)
+    // Every fourth step starts a beat, and is drawn a little lighter so that the eye can count.
+    g.fillStyle = now ? THEME.track : i % 4 === 0 ? THEME.knob : THEME.well
+    g.fill()
+    if (level > 0) {
+      if (this.bars) {
+        const tall = Math.max(4 * u, (h - 2 * gap) * level)
+        rounded(g, x + gap, y + h - gap - tall, w - 2 * gap, tall, 4 * u)
+        g.fillStyle = colour
+        g.fill()
+      } else {
+        g.globalAlpha = (used ? 1 : 0.35) * (this.accent[i] ? 1 : 0.3 + 0.5 * level)
+        g.fillStyle = colour
+        g.fill()
+        g.globalAlpha = used ? 1 : 0.35
+        // An accent is a full, bright step with a mark on it.
+        if (this.accent[i]) { g.fillStyle = THEME.text; g.fillRect(x + w * 0.3, y + gap + 3 * u, w * 0.4, 2.5 * u) }
+      }
+    }
+    if (now) { rounded(g, x + gap, y + gap, w - 2 * gap, h - 2 * gap, 5 * u); g.strokeStyle = THEME.text; g.lineWidth = 1.5 * u; g.stroke() }
+    g.globalAlpha = 1
+  }
+}
+
+/** A − and a + with a number between them, small, at a control's top right: how many steps a pattern has. Where it is, and which of the two a point is on. */
+function countBox(control, u) { return { x: control.x + control.w - 86 * u, y: control.y + 2 * u, w: 80 * u, h: 22 * u } }
+function countAt(control, p, u) {
+  const b = countBox(control, u)
+  // A finger is given more room than is drawn: the whole corner.
+  if (p.y > b.y + b.h + 8 * u || p.x < b.x - 8 * u) return 0
+  return p.x < b.x + b.w / 2 ? -1 : 1
+}
+function drawCount(g, control, u, n) {
+  const b = countBox(control, u), cy = b.y + b.h / 2
+  rounded(g, b.x, b.y, b.w, b.h, 6 * u)
+  g.fillStyle = THEME.knob
+  g.fill()
+  g.strokeStyle = control.accent
+  g.lineWidth = 2 * u
+  g.lineCap = 'round'
+  g.beginPath()
+  g.moveTo(b.x + 9 * u, cy); g.lineTo(b.x + 17 * u, cy)
+  g.moveTo(b.x + b.w - 17 * u, cy); g.lineTo(b.x + b.w - 9 * u, cy); g.moveTo(b.x + b.w - 13 * u, cy - 4 * u); g.lineTo(b.x + b.w - 13 * u, cy + 4 * u)
+  g.stroke()
+  words(g, String(n), b.x + b.w / 2, cy + 0.5 * u, 12 * u, THEME.text, 'center', '600')
+}
+/** The step a target says is sounding, if it says: its step() or its position(). */
+function soundingOf(target, length) {
+  const ask = method(target, 'step', 'position')
+  const at = ask ? ask() : null
+  return typeof at === 'number' && at >= 0 ? Math.floor(at) % length : null
+}
+
+/**
+ * A LANE OF STEPS: `steps("accent", 16)`. A row of steps to tap on and off and to drag across;
+ * with `levels: true` each is a bar whose height is its level. `lane.value` is the levels (0 for
+ * off), `lane.steps` the same as { on, level, accent } and `lane.text` as text ("x...x.5."); any
+ * of the three may be set. `lane.length` is how many are in use (the − and + change it, up to
+ * `max`), and `lane.step = 3` lights the one that is sounding. Tied to a setting of a target, it
+ * reads and writes the pattern there, as text if that is how the target keeps it, else as a list.
+ */
+class StepLane extends Control {
+  constructor(panel, kind, spec) {
+    super(panel, kind, spec)
+    let d = {}, there
+    if (spec.target) {
+      this.target = spec.target
+      // The setting may be left out: it is looked for under the names a pattern of this kind goes by.
+      this.param = spec.param ?? this.names.find((name) => readTarget(this.target, name) !== undefined || Object.keys(describe(this.target, name)).length) ?? this.names[0]
+      d = describe(this.target, this.param)
+      there = readTarget(this.target, this.param)
+      if (!this.label && !spec.bare) this.label = d.label ?? d.name ?? String(this.param)
+      this.asText = typeof there === 'string' || (!isList(there) && ['text', 'pattern', 'steps'].includes(d.kind))
+    }
+    const most = clamp(Math.round(spec.max ?? d.max ?? d.steps ?? 32), 1, 64)
+    this.lane = new Lane(most, spec.steps ?? d.length ?? Math.min(16, most), { bars: spec.levels ?? this.bars, accents: spec.accents, velocity: spec.velocity })
+    this.resizable = spec.length !== false // may its length be changed by hand?
+    const given = spec.value ?? there ?? d.default
+    if (given != null) this.read(given, spec.steps == null)
+    this.playing = -1
+    this.per = this.lane.length
+    this.many = false
+    if (spec.value != null && this.target) this.write()
+  }
+  get names() { return ['pattern', 'steps'] }
+  get bars() { return false }
+  /** Take a pattern in any of the ways one is written. */
+  read(given, fit) { this.lane.take(given, fit) }
+  /** What the target is told: text, or a list of levels. */
+  write() { if (this.target) writeTarget(this.target, this.param, this.asText ? this.text : this.value) }
+  get value() { return this.lane.levels }
+  set value(given) { this.read(given, true); this.write(); this.panel.arrange = true }
+  get steps() { return this.lane.steps }
+  set steps(given) { this.value = given }
+  get text() { return this.lane.text }
+  set text(given) { this.value = given }
+  get v() { return this.text }
+  get length() { return this.lane.length }
+  set length(n) { n = clamp(Math.round(n), 1, this.lane.most); if (n !== this.lane.length) { this.lane.length = n; this.write(); this.panel.arrange = true } }
+  get step() { return this.playing }
+  set step(n) { n = n == null || n < 0 ? -1 : Math.floor(n) % this.lane.length; if (n !== this.playing) { this.playing = n; this.touch() } }
+  put(i, level, accent) { if (this.lane.put(i, level, accent)) { this.write(); this.touch() } }
+  clear() { this.lane.take([]); this.write(); this.touch() }
+  /** Changed by hand: the target, the scene and whoever listens are told. */
+  tell() {
+    this.write()
+    if (this.onChange) this.onChange(this.value, this)
+    this.panel.told.push(this.id, this.text)
+    this.touch()
+  }
+  resize(by) {
+    const n = clamp(this.lane.length + by, 1, this.lane.most)
+    if (n === this.lane.length) return
+    this.lane.length = n
+    this.panel.arrange = true
+    this.tell()
+  }
+  scaleOf() { return 1 }
+  get tallness() { return this.lane.bars ? 64 : 30 }
+  natural(u, room) {
+    const n = this.lane.length, side = (per) => (room - 14 * u) / per
+    this.per = n
+    while (side(this.per) < STEP_LEAST * u && this.per > 4) this.per = Math.ceil(this.per / 2)
+    this.each = clamp(side(this.per), STEP_LEAST * u, 34 * u)
+    return [Math.max(this.per * this.each + 14 * u, 150 * u), 28 * u + Math.ceil(n / this.per) * (this.tallness * u + 4 * u) + 4 * u]
+  }
+  spotOf(i, u) {
+    const w = (this.w - 14 * u) / this.per, h = this.tallness * u
+    return { x: this.x + 7 * u + (i % this.per) * w, y: this.y + 28 * u + Math.floor(i / this.per) * (h + 4 * u), w, h }
+  }
+  /** The step at a point, and how far down it the point is (0 at its top, 1 at its bottom), or null. */
+  stepAt(p, u) {
+    const first = this.spotOf(0, u), line = clamp(Math.floor((p.y - first.y) / (first.h + 4 * u)), 0, Math.ceil(this.lane.length / this.per) - 1)
+    const i = line * this.per + clamp(Math.floor((p.x - first.x) / first.w), 0, this.per - 1)
+    return i < this.lane.length ? [i, clamp((p.y - first.y - line * (first.h + 4 * u)) / first.h, 0, 1)] : null
+  }
+  down(p) {
+    const u = this.u, by = this.resizable && p.y < this.y + 26 * u ? countAt(this, p, u) : 0
+    this.drawing = false
+    if (by) return this.resize(by)
+    if (p.y < this.y + 26 * u) return
+    const at = this.stepAt(p, u)
+    if (!at) return
+    this.drawing = true
+    if (this.lane.begin(...at)) this.tell()
+  }
+  move(p) {
+    const at = this.drawing && this.stepAt(p, this.u)
+    if (at && this.lane.drag(...at)) this.tell()
+  }
+  up() { if (this.drawing && this.lane.end()) this.tell(); this.drawing = false }
+  frame() {
+    if (!this.target) return
+    const now = soundingOf(this.target, this.lane.length)
+    if (now != null) this.step = now
+    if (this.held) return
+    // A target whose pattern was changed some other way is followed.
+    const there = readTarget(this.target, this.param)
+    if (there == null) return
+    const said = typeof there === 'string' ? stepsToText(stepsFromText(there)) : [...there].join()
+    if (said === (typeof there === 'string' ? this.text : this.value.join())) return
+    this.read(there, true)
+    this.panel.arrange = true
+  }
+  draw(g, u) {
+    words(g, this.label, this.x + 8 * u, this.y + 13 * u, 12 * u, THEME.dim, 'left', '', this.w - 104 * u)
+    if (this.resizable) drawCount(g, this, u, this.lane.length)
+    for (let i = 0; i < this.lane.length; i++) { const s = this.spotOf(i, u); this.lane.drawStep(g, s.x, s.y, s.w, s.h, u, i, this.accent, i === this.playing) }
+  }
+}
+
+/**
+ * A GATE'S PATTERN: `gatePattern("gate", pad)`. The steps that open and shut a sound in time, each
+ * a bar as tall as the gate is open: tap one on and off, drag up and down for its level, drag
+ * across to draw. It is a lane of steps with levels, and finds its target's pattern by name.
+ */
+class GatePattern extends StepLane {
+  get names() { return ['gate_pattern', 'gatePattern', 'gate', 'pattern'] }
+  get bars() { return true }
+}
+
+/** The patterns an arpeggio can be set to by name: each makes its steps for a chord of so many notes. */
+const ARP_PRESETS = {
+  up: (n) => Array.from({ length: n }, (_, i) => i + 1),
+  down: (n) => Array.from({ length: n }, (_, i) => n - i),
+  'up-down': (n) => [...Array.from({ length: n }, (_, i) => i + 1), ...Array.from({ length: Math.max(0, n - 2) }, (_, i) => n - 1 - i)],
+}
+
+/**
+ * AN ARPEGGIO'S PATTERN: `arpPattern("arp", lead)`. Steps across and the notes of the chord up the
+ * side (1 is its root; the rows above them are the same notes an octave up). Tap a cell and that
+ * step plays that note; tap it again for a rest; drag sideways from it and the note is held across
+ * the next steps. The lane under the grid gives a step an accent, and a second one a slide where
+ * the pattern has them. `arp.value` is the steps, each { note, octave, tie, accent, slide } (note 0
+ * is a rest), `arp.text` the same as text ("1 - 3 2 _ 1 3 5^"), and either may be set.
+ * `arp.preset("up-down")` writes a named pattern.
+ */
+class ArpPattern extends Control {
+  constructor(panel, kind, spec) {
+    super(panel, kind, spec)
+    let d = {}, there
+    if (spec.target) {
+      this.target = spec.target
+      this.param = spec.param ?? ['arp_pattern', 'arpPattern', 'arp', 'pattern'].find((name) => readTarget(this.target, name) !== undefined || Object.keys(describe(this.target, name)).length) ?? 'arp_pattern'
+      d = describe(this.target, this.param)
+      there = readTarget(this.target, this.param)
+      if (!this.label && !spec.bare) this.label = d.label ?? d.name ?? String(this.param)
+      this.asText = typeof there === 'string' || !isList(there)
+    }
+    this.most = clamp(Math.round(spec.max ?? d.max ?? d.steps ?? 32), 1, 64)
+    this.notes = clamp(Math.round(spec.notes ?? d.notes ?? 4), 1, 8)
+    this.octaves = clamp(Math.round(spec.octaves ?? d.octaves ?? 2), 1, 3)
+    this.slides = spec.slide ?? d.slide ?? false
+    this.pattern = []
+    this.count = spec.steps ?? Math.min(8, this.most)
+    const given = spec.value ?? there ?? d.default
+    this.read(given ?? ARP_PRESETS.up(this.notes), spec.steps == null)
+    this.playing = -1
+    this.many = false
+    if (spec.value != null && this.target) this.write()
+  }
+  read(given, fit) {
+    const steps = typeof given === 'string' ? arpFromText(given) : [...(given || [])].map((s) => (typeof s === 'object' && s ? { note: s.note || 0, octave: s.octave || 0, tie: !!s.tie, accent: !!s.accent, slide: !!s.slide } : { note: Number(s) || 0, octave: 0, tie: false, accent: false, slide: false }))
+    if (fit && steps.length) this.count = clamp(steps.length, 1, this.most)
+    this.pattern = Array.from({ length: this.most }, (_, i) => steps[i] || { note: 0, octave: 0, tie: false, accent: false, slide: false })
+  }
+  write() { if (this.target) writeTarget(this.target, this.param, this.asText ? this.text : this.value) }
+  get value() { return this.pattern.slice(0, this.count).map((s) => ({ ...s })) }
+  set value(given) { this.read(given, true); this.write(); this.panel.arrange = true }
+  get text() { return arpToText(this.pattern.slice(0, this.count)) }
+  set text(given) { this.value = given }
+  get v() { return this.text }
+  get length() { return this.count }
+  set length(n) { n = clamp(Math.round(n), 1, this.most); if (n !== this.count) { this.count = n; this.write(); this.panel.arrange = true } }
+  get step() { return this.playing }
+  set step(n) { n = n == null || n < 0 ? -1 : Math.floor(n) % this.count; if (n !== this.playing) { this.playing = n; this.touch() } }
+  /** Write a pattern by its name: "up", "down", "up-down". */
+  preset(name) {
+    const make = ARP_PRESETS[name]
+    if (!make) return
+    this.read(make(this.notes), true)
+    this.panel.arrange = true
+    this.tell()
+  }
+  tell() {
+    this.write()
+    if (this.onChange) this.onChange(this.value, this)
+    this.panel.told.push(this.id, this.text)
+    this.touch()
+  }
+  scaleOf() { return 1 }
+  get rows() { return this.notes * this.octaves }
+  get lanes() { return this.slides ? 2 : 1 }
+  natural(u, room) {
+    const side = (room - 40 * u) / this.count
+    this.each = clamp(side, STEP_LEAST * u, 34 * u)
+    this.high = clamp(200 / this.rows, 16, 26) * u
+    return [Math.max(this.count * this.each + 40 * u, 170 * u), 28 * u + this.rows * this.high + this.lanes * 24 * u + 10 * u]
+  }
+  grid(u) {
+    const x = this.x + 30 * u, y = this.y + 28 * u, w = (this.w - 40 * u) / this.count, h = (this.h - 38 * u - this.lanes * 24 * u) / this.rows
+    return { x, y, w, h, under: y + this.rows * h + 4 * u }
+  }
+  /** What is at a point: { i, row } in the grid (row 0 is the root, at the bottom), or { i, lane } under it, or null. */
+  cellAt(p, u) {
+    const s = this.grid(u), i = Math.floor((p.x - s.x) / s.w)
+    if (i < 0 || i >= this.count) return null
+    if (p.y >= s.under) { const lane = Math.floor((p.y - s.under) / (24 * u)); return lane < this.lanes ? { i, lane } : null }
+    const row = this.rows - 1 - Math.floor((p.y - s.y) / s.h)
+    return row >= 0 && row < this.rows ? { i, row } : null
+  }
+  down(p) {
+    const u = this.u
+    this.from = null
+    if (p.y < this.y + 26 * u) {
+      const by = countAt(this, p, u), n = clamp(this.count + by, 1, this.most)
+      if (by && n !== this.count) { this.count = n; this.panel.arrange = true; this.tell() }
+      return
+    }
+    const at = this.cellAt(p, u)
+    if (!at) return
+    const step = this.pattern[at.i]
+    if (at.lane != null) {
+      // The lanes under the grid: an accent, and a slide.
+      const name = at.lane ? 'slide' : 'accent'
+      step[name] = !step[name]
+      return this.tell()
+    }
+    const note = at.row % this.notes + 1, octave = Math.floor(at.row / this.notes)
+    // The chosen cell tapped again is a rest; any other cell is that step's note.
+    const same = !step.tie && step.note === note && step.octave === octave
+    Object.assign(step, { note: same ? 0 : note, octave: same ? 0 : octave, tie: false })
+    this.from = same ? null : at.i
+    this.before = this.pattern.map((was) => ({ ...was })) // what each step was, for one that is tied over and then let go again
+    this.tell()
+  }
+  move(p) {
+    if (this.from == null) return
+    // Dragged sideways from a note: it is held across the steps the finger has passed, and no further.
+    const s = this.grid(this.u), to = clamp(Math.floor((p.x - s.x) / s.w), this.from, this.count - 1)
+    let changed = false
+    for (let i = this.from + 1; i <= Math.max(to, this.reach || 0); i++) {
+      const step = this.pattern[i]
+      if (i <= to && !step.tie) { Object.assign(step, { note: 0, octave: 0, tie: true }); changed = true }
+      else if (i > to && step.tie) { Object.assign(step, this.before[i]); changed = true }
+    }
+    this.reach = to
+    if (changed) this.tell()
+  }
+  up() { this.from = null; this.reach = 0 }
+  frame() {
+    if (!this.target) return
+    const now = soundingOf(this.target, this.count)
+    if (now != null) this.step = now
+    if (this.held) return
+    const there = readTarget(this.target, this.param)
+    if (there == null) return
+    const said = typeof there === 'string' ? arpToText(arpFromText(there)) : arpToText([...there].map((s) => (typeof s === 'object' ? s : { note: s })))
+    if (said === this.text) return
+    this.read(there, true)
+    this.panel.arrange = true
+  }
+  draw(g, u) {
+    const s = this.grid(u)
+    words(g, this.label, this.x + 8 * u, this.y + 13 * u, 12 * u, THEME.dim, 'left', '', this.w - 104 * u)
+    drawCount(g, this, u, this.count)
+    for (let row = 0; row < this.rows; row++) {
+      const y = s.y + (this.rows - 1 - row) * s.h
+      // The notes of the chord, named up the side: the octave above is drawn a little apart from the one below.
+      words(g, String(row % this.notes + 1) + (row >= this.notes ? '↑'.repeat(Math.floor(row / this.notes)) : ''), this.x + 26 * u, y + s.h / 2, 10 * u, THEME.dim, 'right')
+      for (let i = 0; i < this.count; i++) {
+        rounded(g, s.x + i * s.w + 1.5 * u, y + 1.5 * u, s.w - 3 * u, s.h - 3 * u, 4 * u)
+        g.fillStyle = i === this.playing ? THEME.track : i % 4 === 0 ? THEME.knob : THEME.well
+        g.fill()
+      }
+    }
+    // The notes, each as long as it is held: a note and the steps after it that are tied to it are one bar.
+    for (let i = 0; i < this.count; i++) {
+      const step = this.pattern[i]
+      if (!step.note || step.tie) continue
+      let last = i
+      while (last + 1 < this.count && this.pattern[last + 1].tie) last++
+      const row = clamp(step.note - 1 + step.octave * this.notes, 0, this.rows - 1), y = s.y + (this.rows - 1 - row) * s.h
+      rounded(g, s.x + i * s.w + 1.5 * u, y + 1.5 * u, (last - i + 1) * s.w - 3 * u, s.h - 3 * u, 4 * u)
+      g.fillStyle = this.accent
+      g.fill()
+      if (i <= this.playing && this.playing <= last) { g.strokeStyle = THEME.text; g.lineWidth = 1.5 * u; g.stroke() }
+    }
+    for (let lane = 0; lane < this.lanes; lane++) {
+      const y = s.under + lane * 24 * u, name = lane ? 'slide' : 'accent'
+      words(g, lane ? '~' : '!', this.x + 26 * u, y + 11 * u, 11 * u, THEME.dim, 'right', '600')
+      for (let i = 0; i < this.count; i++) {
+        const on = this.pattern[i][name]
+        g.beginPath(); g.arc(s.x + (i + 0.5) * s.w, y + 11 * u, (on ? 6 : 3.5) * u, 0, TAU)
+        g.fillStyle = on ? this.accent : THEME.track
+        g.fill()
+      }
+    }
+  }
+}
+
 /** A step of a grid is never drawn narrower than this, in points: a row too long for its room is put on two lines, or four. */
 const STEP_LEAST = 24
 
@@ -4442,13 +4920,18 @@ class StepGrid extends Control {
     this.steps = Math.max(1, Math.round(spec.steps || 16))
     this.rows = (Array.isArray(spec.rows) ? spec.rows : Array.from({ length: spec.rows || 1 }, (_, i) => String(i + 1))).map(String)
     this.velocity = !!spec.velocity
-    this.cells = this.rows.map((_, r) => Array.from({ length: this.steps }, (_, s) => Number(spec.value?.[r]?.[s]) || 0))
+    // Each row is a lane of steps: the grid says where they are drawn, and the lanes keep them and know what a finger does.
+    this.lanes = this.rows.map((_, r) => { const lane = new Lane(this.steps, this.steps, { velocity: this.velocity }); lane.take(spec.value?.[r] || []); return lane })
     this.playing = -1
     this.per = this.steps // how many steps to a line
     this.many = false
   }
-  get value() { return this.cells.map((row) => [...row]) }
-  set value(rows) { this.cells.forEach((row, r) => row.forEach((_, s) => { row[s] = Number(rows?.[r]?.[s]) || 0 })); this.touch() }
+  get cells() { return this.lanes.map((lane) => lane.level) }
+  get value() { return this.lanes.map((lane) => lane.levels) }
+  set value(rows) { this.lanes.forEach((lane, r) => lane.take(typeof rows === 'string' ? rows.split('\n')[r] : rows?.[r])); this.touch() }
+  /** The rows as text, a line for each: "x...x...". */
+  get text() { return this.lanes.map((lane) => lane.text).join('\n') }
+  set text(rows) { this.value = rows }
   /** The column that is playing now (none: -1). */
   get step() { return this.playing }
   set step(n) { n = n == null || n < 0 ? -1 : Math.floor(n) % this.steps; if (n !== this.playing) { this.playing = n; this.touch() } }
@@ -4458,18 +4941,17 @@ class StepGrid extends Control {
   /** A whole row, by its name or its number. */
   row(row) { return [...(this.cells[this.rowOf(row)] || [])] }
   put(row, step, on) {
-    const r = this.rowOf(row), level = on === true ? 1 : clamp(Number(on) || 0, 0, 1)
-    if (!this.cells[r] || !(step >= 0 && step < this.steps) || this.cells[r][step] === level) return false
-    this.cells[r][step] = level
+    if (!this.lanes[this.rowOf(row)]?.put(step, on)) return false
     this.touch()
     return true
   }
-  clear() { for (const row of this.cells) row.fill(0); this.touch() }
-  /** A cell changed by hand. */
-  take(r, s, level) {
-    if (!this.put(r, s, level)) return
+  clear() { for (const lane of this.lanes) lane.take([]); this.touch() }
+  /** A step changed by hand. */
+  said(r, s) {
+    const level = this.lanes[r].level[s]
     if (this.onChange) this.onChange(this.rows[r], s, level, this)
     this.panel.told.push(this.id, [r, s, level])
+    this.touch()
   }
   scaleOf() { return 1 }
   natural(u, room, g) {
@@ -4495,27 +4977,22 @@ class StepGrid extends Control {
     const s = line * this.per + col
     return line >= 0 && r >= 0 && r < this.rows.length && col >= 0 && col < this.per && s < this.steps ? [r, s] : null
   }
+  /** How far down its cell a point is: 0 at the top, 1 at the bottom. */
+  downIn(p, at) { const c = this.spotOf(at[0], at[1], this.u); return clamp((p.y - c.y) / c.h, 0, 1) }
   down(p) {
     const at = this.cellAt(p, this.u)
-    this.paint = null
-    if (!at) return
-    // The first cell is turned over, and the drag then turns every cell it crosses the same way.
-    this.paint = this.cells[at[0]][at[1]] ? 0 : 1
-    this.first = at
-    this.from = { x: p.x, y: p.y }
-    this.take(at[0], at[1], this.paint)
+    this.drawn = at ? at[0] : null
+    if (at && this.lanes[at[0]].begin(at[1], this.downIn(p, at))) this.said(at[0], at[1])
   }
   move(p) {
-    if (this.paint == null) return
-    const at = this.cellAt(p, this.u)
-    if (this.velocity && this.paint && at && at[0] === this.first[0] && at[1] === this.first[1]) {
-      // How hard: up from where the finger landed is harder, down is softer.
-      const travel = (this.from.y - p.y) / (60 * this.u)
-      if (Math.abs(travel) > 0.08) this.take(at[0], at[1], clamp(Math.round((1 + (travel > 0 ? 0 : travel)) * 20) / 20, 0.1, 1))
-      return
-    }
-    if (at) this.take(at[0], at[1], this.paint)
+    const at = this.drawn == null ? null : this.cellAt(p, this.u)
+    if (!at) return
+    // Along its own row a finger paints; on another row it paints there the same way.
+    const lane = this.lanes[this.drawn], own = lane.stroke && at[1] === lane.stroke.first
+    if (!lane.stroke) return
+    if (at[0] === this.drawn || own) { if (lane.drag(at[1], this.downIn(p, [this.drawn, at[1]]))) this.said(this.drawn, at[1]) } else if (this.lanes[at[0]].put(at[1], lane.stroke.paint)) this.said(at[0], at[1])
   }
+  up() { if (this.drawn != null) this.lanes[this.drawn].end(); this.drawn = null }
   draw(g, u) {
     if (this.label) words(g, this.label, this.x + 8 * u, this.y + 12 * u, 12 * u, THEME.dim, 'left', '', this.w - 16 * u)
     const lines = Math.ceil(this.steps / this.per)
@@ -4524,15 +5001,7 @@ class StepGrid extends Control {
         const c = this.spotOf(r, line * this.per, u)
         words(g, this.rows[r], this.x + 7 * u + this.names - 8 * u, c.y + c.h / 2, 11 * u, THEME.dim, 'right', '', this.names - 8 * u)
       }
-      for (let s = 0; s < this.steps; s++) {
-        const c = this.spotOf(r, s, u), level = this.cells[r][s], now = s === this.playing, gap = 2 * u
-        rounded(g, c.x + gap, c.y + gap, c.w - 2 * gap, c.h - 2 * gap, 5 * u)
-        // Every fourth step starts a beat, and is drawn a little lighter so that the eye can count.
-        g.fillStyle = now ? THEME.track : s % 4 === 0 ? THEME.knob : THEME.well
-        g.fill()
-        if (level) { g.globalAlpha = 0.35 + 0.65 * level; g.fillStyle = this.accent; g.fill(); g.globalAlpha = 1 }
-        if (now) { g.strokeStyle = THEME.text; g.lineWidth = 1.5 * u; g.stroke() }
-      }
+      for (let s = 0; s < this.steps; s++) { const c = this.spotOf(r, s, u); this.lanes[r].drawStep(g, c.x, c.y, c.w, c.h, u, s, this.accent, s === this.playing) }
     }
   }
 }
@@ -4637,6 +5106,319 @@ class Pads extends Control {
   }
 }
 
+/** Patterns to start a drum sequencer from, by name: a row of steps for each drum it knows, sixteen steps long (repeated for a longer bar). */
+const DRUM_PRESETS = {
+  'four on the floor': { kick: 'x...x...x...x...', snare: '....x.......x...', clap: '....x.......x...', hat: '..x...x...x...x.' },
+  backbeat: { kick: 'x.......x.x.....', snare: '....X.......X...', clap: '............x...', hat: 'x.x.x.x.x.x.x.x.' },
+  breakbeat: { kick: 'x.x.......x..x..', snare: '....X..x.x..X...', clap: '....x.......x...', hat: 'x.x.x.x.x.x.x.xx' },
+}
+/** How far ahead of its time a step is handed to a target that can be told when, in seconds: far enough that a busy page does not make it late. */
+const SEQ_AHEAD = 0.12
+/** The swings a tap on the word steps through: how late every other step is, as a part of a step. */
+const SWINGS = [0, 0.2, 0.33, 0.5]
+
+/**
+ * THE DRUM SEQUENCER: `drumSeq("beat", ["kick", "snare", "hat", "clap"])`. A row of steps for each
+ * drum, and on the widget itself what it takes to play them: play and stop, a tempo (− and +, or tap
+ * the number in time), swing, starter patterns and clear. Tap a step on and off, drag across to
+ * paint, drag up on a step for an accent. Tap a drum's name to hear it, and the dot beside it to
+ * mute its row. On a narrow screen it shows as many steps as fit a finger and turns the page as it plays.
+ *
+ * IT PLAYS BY ITSELF when it has something to play: `target` (or `targets`, one for each row or
+ * by name) is anything with noteOn(note, velocity), and each row plays its drum's note (a kick is
+ * 36; `notes` says otherwise). `onStep(row, step, velocity, at)` hears every step that sounds.
+ *
+ * THE BEAT IS KEPT TIGHT BY THE TARGET'S OWN CLOCK when it has one. A target (or `clock`) that
+ * offers time(), in seconds, is handed each step a little before it is due, as
+ * noteOn(note, velocity, { at }) and noteOff(note, { at }), to play at exactly that time. With no
+ * such clock a step is played on the frame it falls due, which wobbles when the page is busy.
+ */
+class DrumSeq extends Control {
+  constructor(panel, kind, spec) {
+    super(panel, kind, spec)
+    this.rows = (Array.isArray(spec.rows) ? spec.rows : ['kick', 'snare', 'hat', 'clap']).map(String)
+    this.count = clamp(Math.round(spec.steps || 16), 1, 32)
+    this.lanes = this.rows.map(() => new Lane(32, this.count, { accents: true }))
+    this.notes = this.rows.map((name, i) => spec.notes?.[i] ?? spec.notes?.[name] ?? DRUMS[name.toLowerCase()] ?? 36 + i)
+    this.targets = this.rows.map((name, i) => (Array.isArray(spec.targets) ? spec.targets[i] : spec.targets?.[name]) ?? spec.target ?? null)
+    this.clock = [spec.clock, ...this.targets].find((thing) => method(thing, 'time')) || null
+    this.onStep = spec.onStep || null
+    this.tempo = clamp(spec.tempo ?? 120, 30, 300)
+    this.swing = clamp(spec.swing ?? 0, 0, 0.75)
+    this.muted = this.rows.map(() => false)
+    this.lit = this.rows.map(() => 0)
+    this.on = false
+    this.pos = -1 // the step that is sounding
+    this.queue = [] // steps handed over that have not sounded yet: { s, at }
+    this.offs = [] // notes to let go, for a target that cannot be told when: { r, at }
+    this.page = 0
+    this.per = this.count
+    this.taps = []
+    this.preset_ = ''
+    this.many = false
+    if (spec.value != null) this.value = spec.value
+    else if (spec.pattern) this.pattern = spec.pattern
+    if (spec.playing) this.play()
+  }
+  /** The rows, each a list of levels (0 for off); set from the same, from rows of text, or from text with a line for each drum. */
+  get value() { return this.lanes.map((lane) => lane.levels) }
+  set value(given) {
+    const rows = typeof given === 'string' ? given.split('\n').map((line) => line.slice(line.indexOf(':') + 1)).filter((line) => line.trim()) : given
+    this.lanes.forEach((lane, r) => lane.take(rows?.[r] ?? []))
+    this.touch()
+  }
+  get text() { return this.lanes.map((lane) => lane.text).join('\n') }
+  set text(given) { this.value = given }
+  get steps() { return this.lanes.map((lane) => lane.steps) }
+  get v() { return this.text }
+  get length() { return this.count }
+  set length(n) { n = clamp(Math.round(n), 1, 32); if (n !== this.count) { this.count = n; for (const lane of this.lanes) lane.length = n; this.panel.arrange = true } }
+  get step() { return this.pos }
+  set step(n) { n = n == null || n < 0 ? -1 : Math.floor(n) % this.count; if (n !== this.pos) { this.pos = n; this.touch() } }
+  /** A starter pattern, by its name: "four on the floor", "backbeat", "breakbeat". */
+  get pattern() { return this.preset_ }
+  set pattern(name) {
+    const rows = DRUM_PRESETS[name]
+    if (!rows) return
+    this.preset_ = name
+    this.lanes.forEach((lane, r) => lane.take((rows[this.rows[r].toLowerCase()] || '').repeat(2).slice(0, 32)))
+    this.touch()
+  }
+  rowOf(row) { return typeof row === 'number' ? row : this.rows.indexOf(String(row)) }
+  get(row, step) { return this.lanes[this.rowOf(row)]?.level[step] || 0 }
+  put(row, step, on, accent) { if (this.lanes[this.rowOf(row)]?.put(step, on, accent)) this.touch() }
+  clear() { for (const lane of this.lanes) lane.take([]); this.preset_ = ''; this.touch() }
+  mute(row, on = true) { const r = this.rowOf(row); if (r >= 0) { this.muted[r] = !!on; this.touch() } }
+  /** The time, in seconds: the clock's if there is one, else the page's. */
+  now() { return this.clock ? this.clock.time() : performance.now() / 1000 }
+  get long() { return 60 / this.tempo / 4 } // one step: a quarter of a beat
+  get playing() { return this.on }
+  set playing(on) { if (on) this.play(); else this.stop() }
+  play() {
+    if (this.on) return
+    this.on = true
+    this.next = 0
+    this.due = this.now() + 0.05
+    this.touch()
+  }
+  stop() {
+    if (!this.on) return
+    this.on = false
+    this.queue.length = 0
+    this.pos = -1
+    this.touch()
+  }
+  /** Play one drum now, as a tap on its name does. */
+  hit(row, velocity = 0.9, at) {
+    const r = this.rowOf(row), target = this.targets[r]
+    if (r < 0) return
+    const play = method(target, 'noteOn', 'note_on'), stop = method(target, 'noteOff', 'note_off'), timed = this.clock && at != null
+    if (play) timed ? play(this.notes[r], velocity, { at }) : play(this.notes[r], velocity)
+    if (stop && timed) stop(this.notes[r], { at: at + this.long * 0.9 })
+    else if (stop) this.offs.push({ r, at: this.now() + this.long * 0.9 })
+    this.lit[r] = performance.now() + (timed ? Math.max(0, at - this.now()) * 1000 : 0)
+  }
+  /** Step s sounds at this time: every drum that is on there, and not muted, is played. */
+  fire(s, at) {
+    this.queue.push({ s, at })
+    this.lanes.forEach((lane, r) => {
+      const level = lane.level[s]
+      if (!level || this.muted[r]) return
+      const velocity = lane.accent[s] ? 1 : Math.round(0.7 * level * 100) / 100
+      this.hit(r, velocity, at)
+      if (this.onStep) this.onStep(this.rows[r], s, velocity, at, this)
+      this.panel.told.push(this.id, ['step', r, s, velocity])
+    })
+  }
+  frame() {
+    const now = this.now()
+    for (let i = this.offs.length - 1; i >= 0; i--) {
+      if (this.offs[i].at > now) continue
+      const { r } = this.offs.splice(i, 1)[0], stop = method(this.targets[r], 'noteOff', 'note_off')
+      if (stop) stop(this.notes[r])
+    }
+    if (this.tapped && performance.now() - this.tapped > 250) { this.tapped = 0; this.touch() }
+    if (this.side && performance.now() >= this.again) { this.again = performance.now() + STEP_AGAIN_MS; this.speed(this.side) }
+    if (this.lit.some((at) => at && performance.now() - at < PAD_FLASH_MS + 40 && performance.now() >= at)) this.touch()
+    if (!this.on) return
+    // Each step that falls due before the page is looked at again is handed over now, with the time it is to sound.
+    const ahead = this.clock ? SEQ_AHEAD : 0
+    let turns = 0
+    while (this.due <= now + ahead && turns++ < 64) {
+      const s = this.next % this.count
+      this.fire(s, this.due + (s % 2 ? this.swing * this.long : 0))
+      this.next++
+      this.due += this.long
+    }
+    // The column that is lit is the step that has sounded, not the one handed over ahead of time.
+    while (this.queue.length && this.queue[0].at <= now) {
+      this.pos = this.queue.shift().s
+      // On a screen too narrow for the whole bar, the page is turned to where the beat is.
+      if (Math.floor(this.pos / this.per) !== this.page && performance.now() - (this.paged || 0) > 2500) this.page = Math.floor(this.pos / this.per)
+      this.touch()
+    }
+  }
+  /** Tempo up or down by hand. */
+  speed(by) {
+    const tempo = clamp(Math.round(this.tempo + by), 30, 300)
+    if (tempo === this.tempo) return
+    this.tempo = tempo
+    this.panel.told.push(this.id, ['tempo', tempo])
+    this.touch()
+  }
+  scaleOf() { return 1 }
+  natural(u, room, g) {
+    g.font = `${11 * u}px ${THEME.font}`
+    this.side_ = 0
+    for (const name of this.rows) this.side_ = Math.max(this.side_, g.measureText(name).width)
+    this.side_ = Math.min(this.side_, 56 * u) + 26 * u
+    // As many steps to a page as a finger can use: all of them, or else so many whole beats.
+    const fit = Math.floor((room - this.side_ - 14 * u) / (STEP_LEAST * u))
+    this.per = this.count <= fit ? this.count : Math.max(4, Math.floor(fit / 4) * 4)
+    const each = clamp((room - this.side_ - 14 * u) / this.per, STEP_LEAST * u, 32 * u)
+    return [Math.max(this.side_ + this.per * each + 14 * u, 252 * u), (34 + this.rows.length * 30 + 34) * u]
+  }
+  /** The parts of the strip above the rows and of the one below them: each a box to tap. */
+  parts(u) {
+    const x = this.x + 7 * u, y = this.y + 4 * u, h = 26 * u, low = this.y + this.h - 30 * u, right = this.x + this.w - 7 * u, pages = Math.ceil(this.count / this.per)
+    const turn = pages > 1 ? 46 * u : 0
+    return {
+      play: { x, y, w: 34 * u, h }, slower: { x: x + 40 * u, y, w: 28 * u, h }, tempo: { x: x + 68 * u, y, w: 58 * u, h }, faster: { x: x + 126 * u, y, w: 28 * u, h },
+      swing: { x: right - 82 * u, y, w: 82 * u, h },
+      pattern: { x, y: low, w: right - x - 56 * u - turn - 8 * u, h }, turn: pages > 1 ? { x: right - 52 * u - turn - 4 * u, y: low, w: turn, h } : null, clear: { x: right - 52 * u, y: low, w: 52 * u, h },
+    }
+  }
+  spotOf(r, s, u) {
+    const w = (this.w - this.side_ - 14 * u) / this.per, h = 30 * u
+    return { x: this.x + 7 * u + this.side_ + (s - this.page * this.per) * w, y: this.y + 34 * u + r * h, w, h }
+  }
+  cellAt(p, u) {
+    const first = this.spotOf(0, this.page * this.per, u), r = Math.floor((p.y - first.y) / first.h), col = Math.floor((p.x - first.x) / first.w), s = this.page * this.per + col
+    return r >= 0 && r < this.rows.length && col >= 0 && col < this.per && s < this.count ? [r, s, clamp((p.y - first.y - r * first.h) / first.h, 0, 1)] : null
+  }
+  changed_() {
+    if (this.onChange) this.onChange(this.value, this)
+    this.panel.told.push(this.id, this.text)
+    this.touch()
+  }
+  down(p) {
+    const u = this.u, parts = this.parts(u), on = (b) => b && p.x >= b.x && p.x < b.x + b.w && p.y >= b.y - 4 * u && p.y < b.y + b.h + 4 * u
+    this.row_ = null
+    this.touch()
+    if (on(parts.play)) { this.playing = !this.on; return this.panel.told.push(this.id, ['play', this.on ? 1 : 0]) }
+    if (on(parts.slower) || on(parts.faster)) { this.side = on(parts.slower) ? -1 : 1; this.again = performance.now() + STEP_HOLD_MS; return this.speed(this.side) }
+    if (on(parts.tempo)) {
+      // Tapped in time: the tempo is the time between the last few taps.
+      const now = performance.now()
+      this.taps = this.taps.filter((at) => now - at < 2000).slice(-4)
+      this.taps.push(now)
+      this.tapped = now
+      if (this.taps.length > 1) this.speed(60000 / ((now - this.taps[0]) / (this.taps.length - 1)) - this.tempo)
+      return
+    }
+    if (on(parts.swing)) { this.swing = SWINGS[(SWINGS.findIndex((s) => Math.abs(s - this.swing) < 0.01) + 1) % SWINGS.length]; return this.panel.told.push(this.id, ['swing', this.swing]) }
+    if (on(parts.clear)) { this.clear(); return this.changed_() }
+    if (on(parts.turn)) { this.page = (this.page + 1) % Math.ceil(this.count / this.per); this.paged = performance.now(); return }
+    if (on(parts.pattern)) { const names = Object.keys(DRUM_PRESETS); this.pattern = names[(names.indexOf(this.preset_) + 1) % names.length]; return this.changed_() }
+    const top = this.y + 34 * u, r = Math.floor((p.y - top) / (30 * u))
+    if (r >= 0 && r < this.rows.length && p.x < this.x + 7 * u + this.side_) {
+      // The dot mutes its row; the name plays its drum.
+      if (p.x < this.x + 26 * u) { this.muted[r] = !this.muted[r]; return this.panel.told.push(this.id, ['mute', r, this.muted[r] ? 1 : 0]) }
+      return this.hit(r, 0.9, this.clock ? this.now() : null)
+    }
+    const at = this.cellAt(p, u)
+    if (!at) return
+    this.row_ = at[0]
+    this.preset_ = ''
+    if (this.lanes[at[0]].begin(at[1], at[2])) this.changed_()
+  }
+  move(p) {
+    if (this.row_ == null) return
+    const at = this.cellAt(p, this.u), lane = this.lanes[this.row_]
+    if (!at || !lane.stroke) return
+    // Along its own row a finger paints, and leans up for an accent (still on its own step when it has left the row that way); on another row it paints there the same way.
+    const own = at[1] === lane.stroke.first, c = this.spotOf(this.row_, at[1], this.u)
+    if (at[0] === this.row_ || own ? lane.drag(at[1], clamp((p.y - c.y) / c.h, 0, 1)) : this.lanes[at[0]].put(at[1], lane.stroke.paint, false)) this.changed_()
+  }
+  up() {
+    if (this.row_ != null) this.lanes[this.row_].end()
+    this.row_ = null
+    this.side = 0
+    this.touch()
+  }
+  draw(g, u) {
+    const parts = this.parts(u), box = (b, fill) => { rounded(g, b.x, b.y, b.w, b.h, 7 * u); g.fillStyle = fill; g.fill() }
+    const mid = (b) => [b.x + b.w / 2, b.y + b.h / 2 + 0.5 * u]
+    // Play, or stop: a triangle, or a square.
+    box(parts.play, this.on ? this.accent : THEME.knob)
+    const [px, py] = mid(parts.play)
+    g.fillStyle = this.on ? THEME.well : this.accent
+    g.beginPath()
+    if (this.on) g.rect(px - 5 * u, py - 5.5 * u, 10 * u, 10 * u)
+    else { g.moveTo(px - 4 * u, py - 6.5 * u); g.lineTo(px + 6.5 * u, py - 0.5 * u); g.lineTo(px - 4 * u, py + 5.5 * u) }
+    g.fill()
+    box({ x: parts.slower.x, y: parts.slower.y, w: parts.faster.x + parts.faster.w - parts.slower.x, h: parts.slower.h }, THEME.knob)
+    box({ x: parts.tempo.x, y: parts.tempo.y + 3 * u, w: parts.tempo.w, h: parts.tempo.h - 6 * u }, this.tapped ? THEME.track : THEME.well)
+    g.strokeStyle = this.accent
+    g.lineWidth = 2 * u
+    g.lineCap = 'round'
+    const [sx, sy] = mid(parts.slower), [fx, fy] = mid(parts.faster)
+    g.beginPath(); g.moveTo(sx - 4 * u, sy); g.lineTo(sx + 4 * u, sy); g.moveTo(fx - 4 * u, fy); g.lineTo(fx + 4 * u, fy); g.moveTo(fx, fy - 4 * u); g.lineTo(fx, fy + 4 * u); g.stroke()
+    words(g, `${this.tempo} bpm`, ...mid(parts.tempo), 11.5 * u, THEME.text, 'center', '600', parts.tempo.w - 4 * u)
+    box(parts.swing, THEME.knob)
+    words(g, `swing ${Math.round(this.swing * 100)}%`, ...mid(parts.swing), 11 * u, this.swing ? THEME.text : THEME.dim, 'center', '', parts.swing.w - 8 * u)
+    if (this.label) words(g, this.label, (parts.faster.x + parts.faster.w + parts.swing.x) / 2, parts.play.y + parts.play.h / 2, 12 * u, THEME.dim, 'center', '', parts.swing.x - parts.faster.x - parts.faster.w - 12 * u)
+    const now = performance.now()
+    this.rows.forEach((name, r) => {
+      const y = this.y + 34 * u + r * 30 * u + 15 * u, muted = this.muted[r], lit = this.lit[r] && now >= this.lit[r] && now - this.lit[r] < PAD_FLASH_MS
+      g.beginPath(); g.arc(this.x + 16 * u, y, 5 * u, 0, TAU)
+      g.fillStyle = muted ? THEME.well : lit ? THEME.text : this.accent
+      g.fill()
+      if (muted) { g.strokeStyle = THEME.track; g.lineWidth = 1.5 * u; g.stroke() }
+      words(g, name, this.x + 27 * u, y + 0.5 * u, 11 * u, muted ? THEME.track : lit ? THEME.text : THEME.dim, 'left', lit ? '600' : '', this.side_ - 22 * u)
+      g.save()
+      if (muted) g.globalAlpha = 0.4
+      for (let s = this.page * this.per; s < Math.min(this.count, (this.page + 1) * this.per); s++) {
+        const c = this.spotOf(r, s, u)
+        if (muted) { g.globalAlpha = 0.4; this.lanes[r].drawStep(g, c.x, c.y, c.w, c.h, u, s, THEME.dim, s === this.pos) } else this.lanes[r].drawStep(g, c.x, c.y, c.w, c.h, u, s, this.accent, s === this.pos)
+      }
+      g.restore()
+    })
+    box(parts.pattern, THEME.knob)
+    words(g, this.preset_ || 'patterns', parts.pattern.x + 10 * u, parts.pattern.y + parts.pattern.h / 2 + 0.5 * u, 11 * u, this.preset_ ? THEME.text : THEME.dim, 'left', '', parts.pattern.w - 28 * u)
+    words(g, '›', parts.pattern.x + parts.pattern.w - 12 * u, parts.pattern.y + parts.pattern.h / 2 - 1 * u, 15 * u, this.accent)
+    if (parts.turn) { box(parts.turn, THEME.knob); words(g, `${this.page + 1} / ${Math.ceil(this.count / this.per)}`, ...mid(parts.turn), 11 * u, THEME.text, 'center', '600') }
+    box(parts.clear, THEME.knob)
+    words(g, 'clear', ...mid(parts.clear), 11 * u, THEME.dim)
+  }
+}
+
+/** The settings that go beside a pattern, each under the names a target may give it. One is made only for a setting the target has; the names are the engine's to settle, and this table is all that says them. */
+const BESIDE = {
+  gatePattern: [['rate', ['gate_rate', 'gateRate']], ['depth', ['gate_depth', 'gateDepth', 'gate']], ['smooth', ['gate_smooth', 'gate_smoothing', 'gateSmooth']], ['swing', ['gate_swing', 'gateSwing']]],
+  arpPattern: [['rate', ['arp_rate', 'arpRate']], ['order', ['arp_order', 'arp_mode', 'arpMode']], ['octaves', ['arp_octaves', 'arpOctaves']], ['length', ['arp_gate', 'arp_length', 'arpGate']], ['style', ['arp_style', 'arpStyle']]],
+}
+/**
+ * A pattern with its settings beside it, on one plate: the pattern, then a select for each setting
+ * of the target that is a choice and a small dial for each that is a number, and for an arpeggio a
+ * select of the patterns it can be set to by name. With no target, or `beside: false`, the pattern alone.
+ */
+function patterned(panel, kind, spec) {
+  const target = spec.target, id = spec.id, sub = (name) => (id != null ? `${id}.${name}` : undefined)
+  const has = target && spec.beside !== false ? BESIDE[kind].map(([label, names]) => [label, names.find((name) => name !== spec.param && Object.keys(describe(target, name)).length)]).filter(([, name]) => name) : []
+  if (!has.length && !(kind === 'arpPattern' && target && spec.beside !== false)) return panel.add(kind, spec)
+  const box = panel.add('group', { label: spec.label, id: sub('plate') })
+  let item
+  box.enter()
+  try {
+    // (The plate has the name: the pattern on it needs none of its own.)
+    item = panel.add(kind, { ...spec, label: undefined, bare: true })
+    if (kind === 'arpPattern') panel.add('select', { label: 'pattern', id: sub('preset'), choices: ['custom', ...Object.keys(ARP_PRESETS)], onChange: (name) => item.preset(name) })
+    for (const [label, name] of has) panel.add(describe(target, name).choices ? 'select' : 'dial', { label, target, param: name, size: 'small', id: sub(label) })
+  } finally { box.leave() }
+  return item
+}
+
 /**
  * A WHEEL, as at the left of a synth's keys: an upright slider drawn as the edge of a wheel that is
  * rolled. `spring: true` (a pitch wheel) lets it roll back to where it started when it is let go; a
@@ -4685,7 +5467,8 @@ class Wheel extends Slider {
   }
 }
 
-Object.assign(KINDS, { joystick: Joystick, dpad: Dpad, actionButton: ActionButton, envelope: Envelope, stepGrid: StepGrid, pads: Pads, wheel: Wheel })
+Object.assign(KINDS, { joystick: Joystick, dpad: Dpad, actionButton: ActionButton, envelope: Envelope, stepGrid: StepGrid, pads: Pads, wheel: Wheel,
+  steps: StepLane, gatePattern: GatePattern, arpPattern: ArpPattern, drumSeq: DrumSeq })
 Object.assign(KINDS, { number: NumberBox, textBox: TextBox, readout: Readout, checkbox: Checkbox, choose: Choose, radio: Radio, dropdown: Dropdown,
   xyPad: XYPad, colourPicker: ColourPicker, progress: Progress, light: Light, busy: Busy, rangeSlider: RangeSlider, fader: Fader })
 for (const kind of ['readout', 'progress', 'light', 'busy']) SLIDES.add(kind)
@@ -4766,6 +5549,29 @@ function padsOf(args) {
   return spec
 }
 
+/** A lane of steps or a pattern: (label, how many steps, options), (label, target, "setting", options) or (label, target, options). The label may be left out. */
+function laned(args) {
+  if (typeof args[0] !== 'string') args = [undefined, ...args]
+  const [label, a, b, c] = args
+  let spec
+  if (typeof a === 'number') spec = { ...b, steps: a }
+  else if (typeof a === 'string' || Array.isArray(a)) spec = { ...b, value: a }
+  else if (a != null && (!isPlain(a) || typeof b === 'string' || method(a, 'set', 'get', 'describe'))) spec = typeof b === 'string' ? { ...c, target: a, param: b } : { ...b, target: a }
+  else spec = { ...a }
+  if (label !== undefined) spec.label = label
+  return spec
+}
+/** A drum sequencer: (label, drums, target, options), any of the first three left out. */
+function sequenced(args) {
+  if (typeof args[0] !== 'string') args = [undefined, ...args]
+  const [label, a, b, c] = args
+  const rows = Array.isArray(a) ? a : undefined, rest = rows ? [b, c] : [a, b]
+  const spec = method(rest[0], 'noteOn', 'note_on') ? { ...rest[1], target: rest[0] } : { ...rest[0] }
+  if (rows) spec.rows = rows
+  if (label !== undefined) spec.label = label
+  return spec
+}
+
 /** The functions a scene calls for the controls of this part. */
 function more(panel) {
   // A control whose numbers are called x and y gives the scene what stands for it (see standIn).
@@ -4815,6 +5621,16 @@ function more(panel) {
     pads: make('pads', padsOf),
     /** A wheel that is rolled: wheel("mod", lead, "mod"). pitchWheel rolls back when it is let go (from -1 to 1 unless told otherwise); modWheel stays. */
     wheel: make('wheel', ranged),
+    /** A lane of steps to tap and drag: lane = steps("accent", 16), then lane.value, lane.text and lane.step = 3. { levels: true } makes each a bar. */
+    steps: make('steps', laned),
+    /** A gate's pattern, each step a bar: gatePattern("gate", pad) finds pad's pattern and puts its rate, depth, smoothing and swing beside it; gatePattern("gate", 16) is one to read. */
+    gatePattern: (...args) => patterned(panel, 'gatePattern', laned(args)),
+    /** An arpeggio's pattern, steps across and chord notes up the side: arpPattern("arp", lead), or arpPattern("arp", "1 - 3 2 _ 1 3 5^"). */
+    arpPattern: (...args) => patterned(panel, 'arpPattern', laned(args)),
+    /** A drum sequencer that plays by itself: drumSeq("beat", ["kick", "snare", "hat", "clap"], drums). Options: steps, tempo, swing, pattern, playing, targets, notes, clock, onStep. */
+    drumSeq: make('drumSeq', sequenced),
+    /** For a host: a pattern made by number, with the settings beside it, and what it took from its target told as for any control. */
+    pattern: (kind, id, spec) => { const item = patterned(panel, kind, { ...spelled(spec), id }); if (item.target) panel.made.push(id, 0, 1, 0, '', item.v) },
     modWheel: make('wheel', ranged),
     pitchWheel: make('wheel', (args) => { const spec = ranged(args); return { spring: true, ...(spec.target || spec.min != null ? null : { min: -1, max: 1, value: 0 }), ...spec } }),
   }
@@ -5044,9 +5860,14 @@ const envelope = (...args) => dials().envelope(...args)
 const stepGrid = (...args) => dials().stepGrid(...args)
 const pads = (...args) => dials().pads(...args)
 const wheel = (...args) => dials().wheel(...args)
+const steps = (...args) => dials().steps(...args)
+const gatePattern = (...args) => dials().gatePattern(...args)
+const arpPattern = (...args) => dials().arpPattern(...args)
+const drumSeq = (...args) => dials().drumSeq(...args)
 const modWheel = (...args) => dials().modWheel(...args)
 const pitchWheel = (...args) => dials().pitchWheel(...args)
 
 export { dials, dial, slider, button, toggle, select, rotary, keyboard, scope, meter, label, group, row, column, grid, page, spacer, wrap, layout, room, over, theme, version,
   number, stepper, textBox, readout, checkbox, choose, radio, dropdown, xyPad, colourPicker, colorPicker, progress, light, busy, rangeSlider, fader,
-  joystick, dpad, actionButton, envelope, stepGrid, pads, wheel, modWheel, pitchWheel }
+  joystick, dpad, actionButton, envelope, stepGrid, pads, wheel, modWheel, pitchWheel,
+  steps, gatePattern, arpPattern, drumSeq }

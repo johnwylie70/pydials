@@ -251,3 +251,53 @@ def test_a_grid_of_steps_pads_and_a_wheel_are_sent_and_heard():
     assert r["out"].strip() == "1 ['snare'] [('kick', 3, 1), ('on', 38), 'snare']"
     r = tick({"n": [2, 38, 0]})
     assert r["out"].strip() == "1 [] [('kick', 3, 1), ('on', 38), 'snare', ('off', 38)]"
+
+
+def test_patterns_are_lists_and_text_and_what_a_hand_draws_arrives_as_text():
+    r = start("""
+        from pydials import *
+        pad = {"gate_pattern": "x.x."}
+        lane = steps("accent", 8)
+        gate = gate_pattern("gate", "x.5.X..3")
+        tied = gate_pattern("tied", pad)
+        arp = arp_pattern("arp", "1 - 3 2 _ 1! 3~ 5^")
+        print(lane.value, gate.value, gate.text, len(gate), tied.text, arp.text, arp.value[4]["tie"], arp.value[7])
+        def update(dt):
+            lane.text = "x..X"
+            gate.put(1, 0.25)
+            lane.step = 2
+            print(lane.value, lane.steps[3]["accent"], pad, arp.text, len(arp))
+    """)
+    assert r["error"] is None
+    assert made(r) == [("steps", 1, {"steps": 8, "label": "accent", "value": "........"}),
+                       ("gatePattern", 2, {"value": "x.5.X..3", "label": "gate", "steps": 8}),
+                       ("gatePattern", 3, {"label": "tied", "value": "x.x.", "steps": 4}),
+                       ("arpPattern", 4, {"value": "1 - 3 2 _ 1! 3~ 5^", "label": "arp"})]
+    lines = r["out"].splitlines()
+    assert lines[0] == "[0, 0, 0, 0, 0, 0, 0, 0] [1, 0, 0.5, 0, 1, 0, 0, 0.3] x.5.X..3 8 x.x. 1 - 3 2 _ 1! 3~ 5^ True {'note': 5, 'octave': 1, 'tie': False, 'accent': False, 'slide': False}"
+    assert sent(r, "set") == [[1, "value", "x..X"], [2, "value", "x35.X..3"], [1, "step", 2]]
+    r = tick({"c": [3, "X..x", 4, "3 2 1"]})
+    assert r["out"].strip() == "[1, 0, 0, 1] True {'gate_pattern': 'X..x'} 3 2 1 3"
+
+
+def test_a_drum_sequencer_is_worked_from_python_and_its_steps_are_heard():
+    r = start("""
+        from pydials import *
+        heard = []
+        class Kit:
+            def note_on(self, note, velocity): heard.append(note)
+        beat = drum_seq("beat", ["kick", "snare"], Kit(), steps=8, tempo=100, value=["x...x...", "..X....."],
+                        on_step=lambda row, step, velocity: heard.append((row, step, velocity)))
+        print(beat.value[1], beat.get("kick", 4), beat.notes, beat.tempo, beat.playing)
+        def update(dt):
+            beat.tempo = 140
+            beat.play()
+            print(beat.text.split()[1], beat.step, beat.muted, heard)
+    """)
+    assert r["error"] is None
+    assert made(r) == [("drumSeq", 1, {"label": "beat", "steps": 8, "tempo": 100, "value": "x...x...\n..X.....", "rows": ["kick", "snare"], "notes": [36, 38]})]
+    assert r["out"].splitlines()[0] == "[0, 0, 1, 0, 0, 0, 0, 0] 1 [36, 38] 100 False"
+    assert sent(r, "set") == [[1, "tempo", 140], [1, "playing", True]]
+    r = tick({"c": [1, ["step", 1, 2, 1], 1, "x.......\n..X...x.", 1, ["mute", 0, 1], 1, ["tempo", 96]]})
+    assert r["out"].strip() == "..X...x. 2 [True, False] [38, ('snare', 2, 1)]"
+    assert sent(r, "set") == [[1, "tempo", 140]]            # a hand set it to 96, and update() put it back

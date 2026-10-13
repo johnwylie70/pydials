@@ -223,7 +223,9 @@ class Control:
         _run.items[self._id] = self
         self.label = spec.get("label") or ""
         self.on_change = spec.pop("on_change", None)
-        api.make(self.kind, self._id, {k: v for k, v in spec.items() if v is not None})
+        # (A pattern tied to something in the page is made with that thing's settings beside it, on a plate.)
+        make = api.pattern if getattr(self, "_plated", False) and "target" in spec else api.make
+        make(self.kind, self._id, {k: v for k, v in spec.items() if v is not None})
 
     def _set(self, name, value):
         _page().set(self._id, name, value)
@@ -1098,7 +1100,8 @@ def theme(**colours):
 
 __all__ += ["number", "stepper", "text_box", "readout", "checkbox", "choose", "radio", "dropdown", "xy_pad", "colour_picker",
             "color_picker", "progress", "light", "busy", "range_slider", "fader", "joystick", "dpad", "action_button",
-            "envelope", "step_grid", "pads", "wheel", "mod_wheel", "pitch_wheel"]
+            "envelope", "step_grid", "pads", "wheel", "mod_wheel", "pitch_wheel",
+            "steps", "gate_pattern", "arp_pattern", "drum_seq"]
 
 
 class Number(_Ranged):
@@ -1952,3 +1955,444 @@ def pitch_wheel(label=None, a=None, b=None, c=None, **options):
     if a is None and options.get("min") is None:
         a, b, c = -1, 1, 0
     return wheel(label, a, b, c, spring=True, **options)
+
+
+# ---------------------------------------------------------------- patterns
+# A pattern as text, with the very marks the page's half uses: change a mark in both tables together.
+#
+#   steps (a gate, a drum's row, a lane):  one mark a step.  . off   x on   X on, with an accent
+#                                          1 to 9: on, at that many tenths.  Spaces and | are for the eye.
+#   an arpeggio:  words with spaces between.  1 2 3: that note of the chord (1 is its root)   - a rest
+#                 _ the note before, held on   after a note: ^ an octave up (v down)   ! an accent   ~ a slide
+
+STEP_MARKS = {"off": ".", "on": "x", "accent": "X", "skipped": " |"}
+ARP_MARKS = {"rest": "-", "tie": "_", "up": "^", "down": "v", "accent": "!", "slide": "~"}
+
+
+def _steps_from(given):
+    """A row of steps, however it is written (text, numbers, True and False, or steps), as [level, accent] pairs."""
+    if isinstance(given, str):
+        out = []
+        for mark in given:
+            if mark in STEP_MARKS["skipped"]:
+                continue
+            if mark in "123456789":
+                out.append([int(mark) / 10, False])
+            else:
+                out.append([0 if mark == STEP_MARKS["off"] else 1, mark == STEP_MARKS["accent"]])
+        return out
+    out = []
+    for step in given or ():
+        if isinstance(step, dict):
+            out.append([step.get("level", 0 if step.get("on") is False else 1), bool(step.get("accent"))])
+        else:
+            out.append([1 if step is True else max(0, min(1, _value_of(step) or 0)), False])
+    return out
+
+
+def _steps_text(steps):
+    marks = []
+    for level, accent in steps:
+        marks.append(STEP_MARKS["off"] if not level > 0 else STEP_MARKS["accent"] if accent else STEP_MARKS["on"] if level >= 0.95
+                     else str(max(1, min(9, int(level * 10 + 0.5)))))
+    return "".join(marks)
+
+
+def _arp_from(given):
+    out = []
+    words = given.split() if isinstance(given, str) else list(given or ())
+    for word in words:
+        step = {"note": 0, "octave": 0, "tie": False, "accent": False, "slide": False}
+        if isinstance(word, dict):
+            step.update({k: word[k] for k in step if k in word})
+        elif isinstance(word, str):
+            digits = "".join(ch for ch in word if ch.isdigit())
+            step["note"] = int(digits) if digits else 0
+            step["tie"] = word[:1] == ARP_MARKS["tie"]
+            step["octave"] = word.count(ARP_MARKS["up"]) - word.count(ARP_MARKS["down"])
+            step["accent"] = ARP_MARKS["accent"] in word
+            step["slide"] = ARP_MARKS["slide"] in word
+        else:
+            step["note"] = int(word or 0)
+        out.append(step)
+    return out
+
+
+def _arp_text(steps):
+    words = []
+    for s in steps:
+        word = ARP_MARKS["tie"] if s["tie"] else ARP_MARKS["rest"] if not s["note"] else str(s["note"]) + (
+            ARP_MARKS["up"] * s["octave"] if s["octave"] > 0 else ARP_MARKS["down"] * -s["octave"])
+        if s["note"] or s["tie"]:
+            word += (ARP_MARKS["accent"] if s["accent"] else "") + (ARP_MARKS["slide"] if s["slide"] else "")
+        words.append(word)
+    return " ".join(words)
+
+
+class Steps(_Bound):
+    """A lane of steps. `value` is their levels (0 for off), `steps` each as a dict, `text` the same as text."""
+    kind = "steps"
+    _names = ("pattern", "steps")
+
+    def __init__(self, label, a, b, spec):
+        if label is not None and not isinstance(label, str):
+            label, a, b = None, label, a
+        spec["label"] = label
+        target = None
+        if _is_number(a):
+            spec.setdefault("steps", int(a))
+        elif isinstance(a, (str, list, tuple)):
+            spec.setdefault("value", a)
+        elif a is not None:
+            target = a
+        self._as_text = True
+        param = b if isinstance(b, str) else None
+        if target is not None and param is None and _in_page(target) is None:
+            param = next((name for name in self._names if _read(target, name) is not None), self._names[0])
+        self._tie(spec, target, param)
+        if "target" in spec and param is None:
+            del spec["param"]                          # the page finds it by name
+        if self._target is not None:
+            there = _read(self._target, self._param)
+            self._as_text = isinstance(there, str)
+            spec["label"] = label or spec.get("label")
+            if spec.get("value") is None and there is not None:
+                spec["value"] = there
+        self._cells = _steps_from(spec.get("value"))
+        if not self._cells:
+            self._cells = [[0, False] for _ in range(spec.get("steps") or 16)]
+        elif spec.get("steps"):
+            self._cells = (self._cells + [[0, False]] * spec["steps"])[:spec["steps"]]
+        if "target" not in spec:
+            spec["value"] = _steps_text(self._cells)
+            spec["steps"] = len(self._cells)
+        self._step = -1
+        Control.__init__(self, spec)
+
+    value = property(lambda self: [level for level, accent in self._cells])
+    steps = property(lambda self: [{"on": level > 0, "level": level, "accent": accent} for level, accent in self._cells])
+    text = property(lambda self: _steps_text(self._cells))
+    length = property(lambda self: len(self._cells))
+
+    def _take(self, given):
+        self._cells = _steps_from(given)
+        self._set("value", self.text)
+        self._out_to_target()
+
+    value = value.setter(_take)
+    steps = steps.setter(_take)
+    text = text.setter(_take)
+
+    @length.setter
+    def length(self, n):
+        self._take((self._cells + [[0, False]] * n)[:max(1, int(n))])
+
+    def put(self, i, on=True, accent=False):
+        """Turn one step on or off (or say its level, from 0 to 1)."""
+        cells = [list(c) for c in self._cells]
+        cells[i] = [1 if on is True else max(0, min(1, _value_of(on) or 0)), bool(accent)]
+        if cells != self._cells:
+            self._take([{"level": level, "accent": accent} for level, accent in cells])
+
+    def clear(self):
+        self._take([0] * len(self._cells))
+
+    @property
+    def step(self):
+        """The step that is lit as the one sounding (none: -1)."""
+        return self._step
+
+    @step.setter
+    def step(self, n):
+        n = -1 if n is None or n < 0 else int(n) % max(1, len(self._cells))
+        if n != self._step:
+            self._step = n
+            self._set("step", n)
+
+    def _out_to_target(self):
+        self._send(self.text if self._as_text else self.value)
+
+    def _made(self, low, high, default, choices, value):
+        if isinstance(value, str):
+            self._cells = _steps_from(value)
+
+    def _told(self, text):
+        self._cells = _steps_from(text)
+        self._out_to_target()
+        if self.on_change:
+            self.on_change(self.value)
+
+    def _frame(self):
+        if self._target is None:
+            return
+        there = _read(self._target, self._param)
+        if there is not None and _steps_text(_steps_from(there)) != self.text:
+            self._cells = _steps_from(there)
+            self._set("value", self.text)
+
+    def __iter__(self):
+        return iter(self.value)
+
+    def __len__(self):
+        return len(self._cells)
+
+
+class GatePattern(Steps):
+    """A gate's pattern: steps that are bars, each as tall as the gate is open."""
+    kind = "gatePattern"
+    _names = ("gate_pattern", "gate", "pattern")
+    _plated = True
+
+
+class ArpPattern(_Bound):
+    """An arpeggio's pattern. `value` is its steps, each a dict (note 0 is a rest), and `text` the same as text."""
+    kind = "arpPattern"
+    _plated = True
+
+    def __init__(self, label, a, b, spec):
+        if label is not None and not isinstance(label, str):
+            label, a, b = None, label, a
+        spec["label"] = label
+        target = None
+        if isinstance(a, (str, list, tuple)):
+            spec.setdefault("value", a)
+        elif a is not None:
+            target = a
+        self._as_text = True
+        param = b if isinstance(b, str) else None
+        if target is not None and param is None and _in_page(target) is None:
+            param = next((name for name in ("arp_pattern", "arp", "pattern") if _read(target, name) is not None), "arp_pattern")
+        self._tie(spec, target, param)
+        if "target" in spec and param is None:
+            del spec["param"]
+        if self._target is not None:
+            there = _read(self._target, self._param)
+            self._as_text = isinstance(there, str)
+            spec["label"] = label or spec.get("label")
+            if spec.get("value") is None and there is not None:
+                spec["value"] = there
+        self._steps = _arp_from(spec.get("value"))
+        if "target" not in spec and self._steps:
+            spec["value"] = _arp_text(self._steps)
+        self._step = -1
+        Control.__init__(self, spec)
+
+    value = property(lambda self: [dict(step) for step in self._steps])
+    text = property(lambda self: _arp_text(self._steps))
+    length = property(lambda self: len(self._steps))
+
+    def _take(self, given):
+        self._steps = _arp_from(given)
+        self._set("value", self.text)
+        self._send(self.text if self._as_text else self.value)
+
+    value = value.setter(_take)
+    text = text.setter(_take)
+
+    def preset(self, name):
+        """Write a pattern by its name: "up", "down" or "up-down". (The page writes it, and says what it wrote a frame later.)"""
+        self._call("preset", name)
+
+    step = Steps.step
+
+    def _made(self, low, high, default, choices, value):
+        if isinstance(value, str):
+            self._steps = _arp_from(value)
+
+    def _told(self, text):
+        self._steps = _arp_from(text)
+        self._send(self.text if self._as_text else self.value)
+        if self.on_change:
+            self.on_change(self.value)
+
+    def _frame(self):
+        if self._target is None:
+            return
+        there = _read(self._target, self._param)
+        if there is not None and _arp_text(_arp_from(there)) != self.text:
+            self._steps = _arp_from(there)
+            self._set("value", self.text)
+
+    def __len__(self):
+        return len(self._steps)
+
+
+class DrumSeq(Control):
+    """A drum sequencer that plays by itself. `value` is its rows of levels, `text` a line of marks for each drum."""
+    kind = "drumSeq"
+
+    def __init__(self, rows, target, spec):
+        self.on_step = spec.pop("on_step", None)
+        self.rows = [str(r) for r in (rows or ["kick", "snare", "hat", "clap"])]
+        spec["rows"] = self.rows
+        self._count = int(spec.get("steps") or 16)
+        # A target in the page is played there, on its own clock; a Python one is played here, a frame after its step.
+        each = spec.pop("targets", None)
+        each = [each.get(name) for name in self.rows] if isinstance(each, dict) else list(each or [])
+        each = [(each[i] if i < len(each) and each[i] is not None else target) for i in range(len(self.rows))]
+        self._targets = [None if _in_page(t) is not None else t for t in each]
+        if any(_in_page(t) is not None for t in each):
+            spec["targets"] = [_in_page(t) for t in each]
+        if _in_page(spec.get("clock")) is not None:
+            spec["clock"] = _in_page(spec["clock"])
+        else:
+            spec.pop("clock", None)
+        drums = {"kick": 36, "rim": 37, "snare": 38, "clap": 39, "tom": 45, "hat": 42, "closed hat": 42, "open hat": 46, "crash": 49, "ride": 51, "cowbell": 56}
+        given = spec.get("notes") or []
+        self.notes = [given[i] if i < len(given) else drums.get(name.lower(), 36 + i) for i, name in enumerate(self.rows)]
+        spec["notes"] = self.notes
+        self._lanes = [[[0, False] for _ in range(self._count)] for _ in self.rows]
+        if spec.get("value") is not None:
+            self._read(spec["value"])
+            spec["value"] = self.text
+        self._tempo = spec.get("tempo") or 120
+        self._swing = spec.get("swing") or 0
+        self._playing = bool(spec.get("playing"))
+        self._step = -1
+        self.muted = [False] * len(self.rows)
+        Control.__init__(self, spec)
+
+    def _read(self, given):
+        lines = [line.split(":")[-1] for line in given.split("\n") if line.strip()] if isinstance(given, str) else list(given or [])
+        for r in range(len(self.rows)):
+            row = _steps_from(lines[r]) if r < len(lines) else []
+            self._lanes[r] = (row + [[0, False]] * self._count)[:self._count]
+
+    def _row(self, row):
+        return row if isinstance(row, int) else self.rows.index(str(row))
+
+    value = property(lambda self: [[level for level, accent in lane] for lane in self._lanes])
+    text = property(lambda self: "\n".join(_steps_text(lane) for lane in self._lanes))
+
+    def _take(self, given):
+        self._read(given)
+        self._set("value", self.text)
+
+    value = value.setter(_take)
+    text = text.setter(_take)
+
+    def get(self, row, step):
+        """One step of one drum: 0 for off, else how hard."""
+        return self._lanes[self._row(row)][step][0]
+
+    def put(self, row, step, on=True, accent=False):
+        self._lanes[self._row(row)][step] = [1 if on is True else max(0, min(1, _value_of(on) or 0)), bool(accent)]
+        self._set("value", self.text)
+
+    def clear(self):
+        self._take([])
+
+    def mute(self, row, on=True):
+        self.muted[self._row(row)] = bool(on)
+        self._call("mute", self._row(row), bool(on))
+
+    def play(self):
+        self.playing = True
+
+    def stop(self):
+        self.playing = False
+
+    def _sets(name, clean):
+        def get(self):
+            return getattr(self, "_" + name)
+
+        def put(self, value):
+            value = clean(_value_of(value))
+            if value != getattr(self, "_" + name):
+                setattr(self, "_" + name, value)
+                self._set(name, value)
+        return property(get, put)
+
+    tempo = _sets("tempo", lambda v: max(30, min(300, v)))
+    swing = _sets("swing", lambda v: max(0, min(0.75, v)))
+    playing = _sets("playing", bool)
+    del _sets
+
+    @property
+    def step(self):
+        """The step that is sounding, as the page last said (none: -1)."""
+        return self._step
+
+    def pattern(self, name):
+        """Start from a pattern by its name: "four on the floor", "backbeat" or "breakbeat"."""
+        self._set("pattern", name)
+
+    def _told(self, news):
+        if isinstance(news, str):
+            self._read(news)
+            if self.on_change:
+                self.on_change(self.value)
+            return
+        what = news[0]
+        if what == "step":
+            r, s, velocity = int(news[1]), int(news[2]), news[3]
+            self._step = s
+            play = _method(self._targets[r], "note_on", "noteOn")
+            if play:
+                play(self.notes[r], velocity)
+            if self.on_step:
+                self.on_step(self.rows[r], s, velocity)
+        elif what == "tempo":
+            self._tempo = news[1]
+        elif what == "swing":
+            self._swing = news[1]
+        elif what == "play":
+            self._playing = bool(news[1])
+            if not self._playing:
+                self._step = -1
+        elif what == "mute":
+            self.muted[int(news[1])] = bool(news[2])
+
+
+def steps(label=None, a=None, b=None, *, value=None, max=None, levels=None, accents=None, velocity=None, length=None,
+          x=None, y=None, share=None, span=None, colour=None, color=None, on_change=None):
+    """A lane of steps to tap on and off and to drag across: `lane = steps("accent", 16)`.
+
+    `lane.value` is the levels (0 for off), `lane.steps` each as a dict and `lane.text` the same as text
+    ("x...x.5."); any of the three may be set. `lane.length` is how many are in use (the − and + change it, up to
+    max=), and `lane.step = 3` lights the one that is sounding. levels=True makes each a bar whose height is its
+    level. steps("gate", pad, "gate_pattern") reads and writes a pattern a target keeps, as text or as a list."""
+    return Steps(label, a, b, _options(value=value, max=max, levels=levels, accents=accents, velocity=velocity, length=length,
+                                       x=x, y=y, share=share, span=span, colour=colour, color=color, on_change=on_change))
+
+
+def gate_pattern(label=None, a=None, b=None, *, value=None, max=None, beside=None, x=None, y=None, share=None, span=None,
+                 colour=None, color=None, on_change=None):
+    """A gate's pattern, each step a bar as tall as the gate is open: tap one on and off, drag up and down for its
+    level, drag across to draw.
+
+    gate_pattern("gate", pad) finds pad's pattern by name and puts its rate, depth, smoothing and swing beside it
+    (beside=False: the pattern alone); gate_pattern("gate", 16) and gate_pattern("gate", "x.x.x5x.") are ones to
+    read: `gate.value`, `gate.text`."""
+    return GatePattern(label, a, b, _options(value=value, max=max, beside=beside, x=x, y=y, share=share, span=span,
+                                             colour=colour, color=color, on_change=on_change))
+
+
+def arp_pattern(label=None, a=None, b=None, *, value=None, steps=None, max=None, notes=None, octaves=None, slide=None,
+                beside=None, x=None, y=None, share=None, span=None, colour=None, color=None, on_change=None):
+    """An arpeggio's pattern: steps across, and the notes of the chord up the side (1 is its root).
+
+    Tap a cell and that step plays that note; tap it again for a rest; drag sideways to hold the note on; the lane
+    under the grid gives a step an accent. arp_pattern("arp", lead) finds lead's pattern by name, with its rate,
+    order, octaves, length and style beside it; arp_pattern("arp", "1 - 3 2 _ 1 3 5^") is one to read:
+    `arp.value` (a dict for each step) and `arp.text`. `arp.preset("up-down")` writes a named pattern."""
+    return ArpPattern(label, a, b, _options(value=value, steps=steps, max=max, notes=notes, octaves=octaves, slide=slide,
+                                            beside=beside, x=x, y=y, share=share, span=span, colour=colour, color=color,
+                                            on_change=on_change))
+
+
+def drum_seq(label=None, rows=None, target=None, *, steps=None, tempo=None, swing=None, pattern=None, value=None,
+             playing=None, targets=None, notes=None, clock=None, x=None, y=None, share=None, span=None, colour=None,
+             color=None, on_change=None, on_step=None):
+    """A drum sequencer that plays by itself: `beat = drum_seq("beat", ["kick", "snare", "hat", "clap"], drums)`.
+
+    A row of steps for each drum, with play and stop, a tempo, swing, starter patterns and clear on the widget.
+    Each row plays its drum's note on `target` (or on its own, with targets=); a target in the page that has a
+    clock is played by the page, in time however busy Python is. on_step(row, step, velocity) hears every step
+    (a frame later). `beat.value` is the rows, `beat.text` a line of marks for each ("x...x..."), and `beat.tempo`,
+    `beat.swing`, `beat.playing`, `beat.play()` and `beat.stop()` work it from code."""
+    if label is not None and not isinstance(label, str):
+        label, rows, target = None, label, rows
+    return DrumSeq(rows, target, _options(label=label, steps=steps, tempo=tempo, swing=swing, pattern=pattern, value=value,
+                                          playing=playing, targets=targets, notes=notes, clock=clock, x=x, y=y, share=share,
+                                          span=span, colour=colour, color=color, on_change=on_change, on_step=on_step))
