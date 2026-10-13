@@ -34,3 +34,5 @@
 - Typing is done in the page, in a real box for text laid over the control, so the device's own keyboard is used and Python is asked nothing until there is something to hear. What is typed does not reach the scene's `keys`.
 - `checkbox("sound", True)`, `choose("mode", ["easy", "medium", "hard"])` (one of a few, side by side), `radio(…)` (one under another) and `dropdown("planet", planets)` (a list that opens over the controls).
 - `xy_pad("filter", lead, "cutoff", "resonance")` (`pad.x`, `pad.y`), `colour_picker("ink", "tomato")`, `progress("loading")`, `light("ready", True)`, `busy("working")`, `range_slider("price", 0, 100, [20, 80])` (`price.low`, `price.high`) and `fader(…)`.
+- For games: `joystick()` (`stick.x`, `stick.y`, `stick.angle`, `stick.distance`), `dpad()` (`pad.left`, `pad.right`, `pad.up`, `pad.down`, `pad.x`, `pad.y`) and `action_button("A")`. `dpad(as_keys=True)` and `action_button("jump", key="space")` hold keys down for the scene, so a game written for `"ArrowLeft" in keys` is played by touch unchanged.
+- Two examples: `settings_panel.py` and `joystick_game.py`.

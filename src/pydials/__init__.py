@@ -1097,7 +1097,7 @@ def theme(**colours):
 # the README: for any program, for games, for music.
 
 __all__ += ["number", "stepper", "text_box", "readout", "checkbox", "choose", "radio", "dropdown", "xy_pad", "colour_picker",
-            "color_picker", "progress", "light", "busy", "range_slider", "fader"]
+            "color_picker", "progress", "light", "busy", "range_slider", "fader", "joystick", "dpad", "action_button"]
 
 
 class Number(_Ranged):
@@ -1598,3 +1598,86 @@ def fader(label=None, a=None, b=None, c=None, *, min=None, max=None, value=None,
     return Fader(label, a, b, c, _options(min=min, max=max, value=value, step=step, unit=unit, log=log, digits=digits,
                                           default=default, x=x, y=y, size=size, share=share, span=span, colour=colour,
                                           color=color, on_change=on_change))
+
+
+# ---------------------------------------------------------------- for games
+
+class Joystick(Control):
+    """A stick under one thumb. `x` and `y` are each from -1 to 1 (y down the picture), and 0 when it is let go."""
+    kind = "joystick"
+
+    def __init__(self, spec):
+        self.x = self.y = 0.0
+        Control.__init__(self, spec)
+
+    value = property(lambda self: [self.x, self.y])
+    angle = property(lambda self: math.atan2(self.y, self.x), doc="The way it is pushed, in radians: 0 to the right, as math.atan2 gives it.")
+    distance = property(lambda self: min(1.0, math.hypot(self.x, self.y)), doc="How far it is pushed, from 0 to 1.")
+
+    def _told(self, pair):
+        self.x, self.y = pair
+        if self.on_change:
+            self.on_change(self.x, self.y)
+
+    def __iter__(self):
+        return iter((self.x, self.y))
+
+
+class Dpad(Control):
+    """A pad of arrows. `left`, `right`, `up` and `down` are True while pressed; `x` and `y` are -1, 0 or 1."""
+    kind = "dpad"
+
+    def __init__(self, spec):
+        self.left = self.right = self.up = self.down = False
+        Control.__init__(self, spec)
+
+    x = property(lambda self: self.right - self.left)
+    y = property(lambda self: self.down - self.up, doc="1 while down is pressed and -1 while up is: y goes down the picture.")
+    value = property(lambda self: [self.x, self.y])
+
+    def _told(self, arrows):
+        # Which arrows are down, as one number: left 1, right 2, up 4, down 8.
+        arrows = int(arrows)
+        self.left, self.right, self.up, self.down = bool(arrows & 1), bool(arrows & 2), bool(arrows & 4), bool(arrows & 8)
+        if self.on_change:
+            self.on_change(self.x, self.y)
+
+    def __iter__(self):
+        return iter((self.x, self.y))
+
+
+class ActionButton(Button):
+    """A round button, as a game pad's A and B are."""
+    kind = "actionButton"
+
+
+def joystick(label=None, *, floating=None, as_keys=None, size=None, width=None, height=None, x=None, y=None, share=None,
+             span=None, colour=None, color=None, on_change=None):
+    """A stick for a thumb, which springs back when it is let go: `stick = joystick()`, then in update()
+    `ship.x += stick.x * speed * dt` and `ship.y += stick.y * speed * dt`.
+
+    `stick.x` and `stick.y` are from -1 to 1, in the scene's own directions (y goes DOWN the picture);
+    `stick.angle` is the way it is pushed and `stick.distance` how far. floating=True: it appears where the thumb
+    lands, anywhere in its box (width=, height=). as_keys=True: pushed, it holds the arrow keys down for the scene."""
+    return Joystick(_options(label=label, floating=floating, as_keys=as_keys, size=size, width=width, height=height, x=x, y=y,
+                             share=share, span=span, colour=colour, color=color, on_change=on_change))
+
+
+def dpad(label=None, *, ways=None, as_keys=None, size=None, x=None, y=None, share=None, span=None, colour=None, color=None,
+         on_change=None):
+    """A pad of arrows under one thumb: `pad = dpad()`, then `if pad.left:` or `x += pad.x * speed * dt`.
+
+    as_keys=True makes it the arrow keys, so a game written with `"ArrowLeft" in keys` is played on a phone
+    unchanged (as_keys="wasd" for those keys). Between two arrows both are pressed, unless ways=4."""
+    return Dpad(_options(label=label, ways=ways, as_keys=as_keys, size=size, x=x, y=y, share=share, span=span, colour=colour,
+                         color=color, on_change=on_change))
+
+
+def action_button(label="", on_press=None, *, key=None, on_release=None, size=None, x=None, y=None, share=None, span=None,
+                  colour=None, color=None):
+    """A round button: `fire = action_button("A")`, then `if fire.pressed:` in update(), or `fire.held`.
+
+    key="space" (or " ", "a", "Enter") holds that key down for the scene while it is pressed. Each finger holds
+    its own control, so a thumb can steer while another fires."""
+    return ActionButton(_options(label=label, on_press=on_press, on_release=on_release, key=key, size=size, x=x, y=y,
+                                 share=share, span=span, colour=colour, color=color))

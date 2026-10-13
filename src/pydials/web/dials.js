@@ -2639,6 +2639,7 @@ class Panel {
 // function a scene calls for each.
 
 SPELLING.on_enter = 'onEnter'
+SPELLING.as_keys = 'asKeys'
 
 /**
  * THE KEYS go to the control that was touched last. `on` says what each key it knows does (it is
@@ -2647,7 +2648,8 @@ SPELLING.on_enter = 'onEnter'
  */
 function keysOf(control, e, on) {
   const panel = control.panel
-  if (panel.focus !== control || panel.typing || e.ctrlKey || e.metaKey || e.altKey) return false
+  // (A key that a control pressed for the scene, as a pad of arrows does, is the scene's alone.)
+  if (panel.focus !== control || panel.typing || e.ctrlKey || e.metaKey || e.altKey || e.isTrusted === false) return false
   if (e.key === 'Tab') {
     const takers = panel.items.filter((item) => item.keyDown && item.kind !== 'keyboard' && item.w && !item.hidden)
     const next = takers[(takers.indexOf(control) + (e.shiftKey ? takers.length - 1 : 1)) % takers.length]
@@ -3406,7 +3408,8 @@ class Dropdown extends Choose {
  * WHAT A SCENE IS GIVEN for a control whose numbers are called x and y. On the control itself those
  * two names say where it is drawn, so the scene holds this instead: the numbers under their own
  * names, with what every control has (value, label, held, onChange, remove, place). The control it
- * stands for is its `control`, and keeps the two numbers as `vx` and `vy`.
+ * stands for is its `control`, and keeps the two numbers as `vx` and `vy` (and a pad of arrows keeps
+ * its up and down, which on a control are a pointer lifting and landing, as `upward` and `downward`).
  */
 function standIn(control, numbers) {
   const face = { control, remove: () => control.remove(), place: (x, y) => control.place(x, y), valueOf: () => control.value, toString: () => String(control.value) }
@@ -3415,7 +3418,7 @@ function standIn(control, numbers) {
     return true
   }
   for (const name of ['value', 'label', 'held', 'onChange', 'id', 'kind', ...numbers]) {
-    const kept = name === 'x' ? 'vx' : name === 'y' ? 'vy' : name
+    const kept = { x: 'vx', y: 'vy', up: 'upward', down: 'downward' }[name] || name
     Object.defineProperty(face, name, { enumerable: true, get: () => control[kept], set: (value) => { if (written(kept)) control[kept] = value } })
   }
   return face
@@ -4067,6 +4070,242 @@ class Fader extends Slider {
   }
 }
 
+// --------------------------------------------------------------------------------------------
+// FOR GAMES: a joystick, a pad of arrows and round buttons. Each finger holds its own control, so a
+// thumb can steer while another fires.
+
+/** The keys a control can press for a scene, by the names a scene gives them: [what `keys` calls it, where it is on the keyboard]. */
+const FED = { left: ['ArrowLeft', 'ArrowLeft'], right: ['ArrowRight', 'ArrowRight'], up: ['ArrowUp', 'ArrowUp'], down: ['ArrowDown', 'ArrowDown'], space: [' ', 'Space'], enter: ['Enter', 'Enter'], shift: ['Shift', 'ShiftLeft'] }
+/**
+ * PRESS A KEY FOR THE SCENE. A game written for the computer's keys (`keys.has("ArrowLeft")`) is
+ * played on a phone unchanged when a control presses those keys for it: the scene's canvas is sent
+ * the same news a real key sends, so `keys`, `onKeyDown` and the rest all hear it. A key is named
+ * as a scene names it ("ArrowLeft", " ", "a") or more plainly ("left", "space").
+ */
+function feedKey(control, name, down) {
+  const fed = control.fed ||= new Set()
+  if (fed.has(name) === !!down) return
+  if (down) fed.add(name); else fed.delete(name)
+  const plain = String(name), [key, code] = FED[plain.toLowerCase()] || [plain, /^[a-z]$/i.test(plain) ? 'Key' + plain.toUpperCase() : /^\d$/.test(plain) ? 'Digit' + plain : plain === ' ' ? 'Space' : plain]
+  control.panel.canvas.dispatchEvent(new KeyboardEvent(down ? 'keydown' : 'keyup', { key, code, bubbles: true, cancelable: true }))
+}
+/** The four keys a stick or a pad of arrows presses: the arrows, or W A S D when told `asKeys: "wasd"`. */
+const fourKeys = (asKeys) => (String(asKeys).toLowerCase() === 'wasd' ? ['a', 'd', 'w', 's'] : Array.isArray(asKeys) ? asKeys : ['left', 'right', 'up', 'down'])
+/** Hold the keys that go with a push: left, right, up, down, each on or off. */
+function feedFour(control, left, right, up, down) {
+  if (!control.asKeys) return
+  const names = fourKeys(control.asKeys)
+  ;[left, right, up, down].forEach((on, i) => feedKey(control, names[i], on))
+}
+
+/**
+ * THE JOYSTICK: a stick under one thumb that springs back when it is let go. `stick.x` and
+ * `stick.y` are each from -1 to 1, in the scene's own directions (x to the right, y DOWN the
+ * picture), so `ship.x += stick.x * speed` and `ship.y += stick.y * speed` go where the thumb
+ * pushes. `stick.angle` is the way it is pushed (in radians, 0 to the right, as `Math.atan2`
+ * gives it) and `stick.distance` how far, 0 to 1. `floating: true`: it appears where the thumb
+ * lands, anywhere in its box. `asKeys: true`: pushed, it holds the arrow keys down for the scene.
+ */
+class Joystick extends Control {
+  constructor(panel, kind, spec) {
+    super(panel, kind, spec)
+    this.floating = !!spec.floating
+    this.asKeys = spec.asKeys || false
+    this.jx = this.jy = 0
+    this.centre = null // where a floating stick was put down
+    this.many = false
+    this.face = standIn(this, ['x', 'y', 'angle', 'distance'])
+  }
+  get vx() { return this.jx }
+  get vy() { return this.jy }
+  get value() { return [this.jx, this.jy] }
+  get angle() { return Math.atan2(this.jy, this.jx) }
+  get distance() { return Math.min(1, Math.hypot(this.jx, this.jy)) }
+  scaleOf() { return 1 }
+  get diameter() { return sized(this.size, 96, 128, 170) }
+  natural(u) {
+    const d = this.diameter
+    // One that appears under the thumb has a box to appear in, bigger than itself.
+    if (this.floating) return [(this.wide || d * 1.7) * u, (this.tall || d * 1.4) * u]
+    return [(d + 16) * u, (d + (this.label ? 34 : 16)) * u]
+  }
+  /** Where its middle is, and how far the knob travels from it. */
+  shape(u) {
+    const d = this.diameter * u, top = this.label ? 22 * u : 0
+    const home = { x: this.x + this.w / 2, y: this.y + top + (this.h - top) / 2 }
+    const r = d / 2, at = this.floating && this.centre ? this.centre : home
+    return { x: at.x, y: at.y, r, reach: r * 0.58 }
+  }
+  push(x, y) {
+    if (x === this.jx && y === this.jy) return
+    this.jx = x; this.jy = y
+    if (this.onChange) this.onChange(x, y, this)
+    this.panel.told.push(this.id, [Math.round(x * 1000) / 1000, Math.round(y * 1000) / 1000])
+    feedFour(this, x < -0.5, x > 0.5, y < -0.5, y > 0.5)
+    this.touch()
+  }
+  down(p) {
+    if (this.floating) {
+      // It is put down under the thumb, but never so near an edge of its box that part of it would be outside.
+      const r = this.diameter * this.u / 2
+      this.centre = { x: clamp(p.x, this.x + r, Math.max(this.x + r, this.x + this.w - r)), y: clamp(p.y, this.y + r, Math.max(this.y + r, this.y + this.h - r)) }
+    }
+    this.move(p)
+    this.touch()
+  }
+  move(p) {
+    const s = this.shape(this.u), dx = (p.x - s.x) / s.reach, dy = (p.y - s.y) / s.reach, far = Math.hypot(dx, dy)
+    // Past the rim the knob stays on it, pointing the way of the thumb.
+    this.push(far > 1 ? dx / far : dx, far > 1 ? dy / far : dy)
+  }
+  up() { this.centre = null; this.push(0, 0); this.touch() }
+  draw(g, u) {
+    const s = this.shape(u), shown = !this.floating || this.held
+    if (this.label) words(g, this.label, this.x + this.w / 2, this.y + 12 * u, 12 * u, THEME.dim, 'center', '', this.w - 6 * u)
+    g.globalAlpha = shown ? 1 : 0.4
+    g.beginPath(); g.arc(s.x, s.y, s.r - 1 * u, 0, TAU)
+    g.fillStyle = THEME.well
+    g.fill()
+    g.strokeStyle = THEME.track
+    g.lineWidth = 2 * u
+    g.stroke()
+    // Four small marks: up, down, left and right.
+    g.fillStyle = THEME.track
+    for (let i = 0; i < 4; i++) {
+      const a = i * TAU / 4, c = Math.cos(a), sn = Math.sin(a), far = s.r - 9 * u
+      g.beginPath()
+      g.moveTo(s.x + c * far, s.y + sn * far)
+      g.lineTo(s.x + c * (far - 7 * u) - sn * 5 * u, s.y + sn * (far - 7 * u) + c * 5 * u)
+      g.lineTo(s.x + c * (far - 7 * u) + sn * 5 * u, s.y + sn * (far - 7 * u) - c * 5 * u)
+      g.fill()
+    }
+    const kx = s.x + this.jx * s.reach, ky = s.y + this.jy * s.reach, kr = s.r * 0.42
+    g.beginPath(); g.arc(kx, ky, kr, 0, TAU)
+    g.fillStyle = this.held ? this.accent : THEME.knob
+    g.fill()
+    g.strokeStyle = this.held ? THEME.text : this.accent
+    g.lineWidth = 2.5 * u
+    g.stroke()
+    g.globalAlpha = 1
+  }
+}
+
+/**
+ * A PAD OF ARROWS: up, down, left and right under one thumb, which slides from one to the next.
+ * `pad.left`, `pad.right`, `pad.up` and `pad.down` are true while pressed, and `pad.x` and `pad.y`
+ * are -1, 0 or 1 (y down the picture, as a scene's is). Between two arrows both are pressed, unless
+ * it was told `ways: 4`. `asKeys: true`: it holds the arrow keys down for the scene, so a game
+ * written for `keys.has("ArrowLeft")` is played on a phone as it is ("wasd" for those keys).
+ */
+class Dpad extends Control {
+  constructor(panel, kind, spec) {
+    super(panel, kind, spec)
+    this.ways = spec.ways === 4 ? 4 : 8
+    this.asKeys = spec.asKeys || false
+    this.jx = this.jy = 0
+    this.many = false
+    this.face = standIn(this, ['x', 'y', 'left', 'right', 'up', 'down', 'ways'])
+  }
+  get vx() { return this.jx }
+  get vy() { return this.jy }
+  get value() { return [this.jx, this.jy] }
+  // Which arrows are pressed. (`up` and `down` on the control itself are a pointer lifting and landing: the scene reads these as pad.up and pad.down.)
+  get left() { return this.jx < 0 }
+  get right() { return this.jx > 0 }
+  get upward() { return this.jy < 0 }
+  get downward() { return this.jy > 0 }
+  scaleOf() { return 1 }
+  get diameter() { return sized(this.size, 104, 132, 170) }
+  natural(u) { return [(this.diameter + 12) * u, (this.diameter + (this.label ? 30 : 12)) * u] }
+  shape(u) {
+    const top = this.label ? 20 * u : 0
+    return { x: this.x + this.w / 2, y: this.y + top + (this.h - top) / 2, r: this.diameter * u / 2 }
+  }
+  push(x, y) {
+    if (x === this.jx && y === this.jy) return
+    this.jx = x; this.jy = y
+    if (this.onChange) this.onChange(x, y, this)
+    // A host is told which arrows are down as one number: left 1, right 2, up 4, down 8.
+    this.panel.told.push(this.id, (x < 0 ? 1 : 0) | (x > 0 ? 2 : 0) | (y < 0 ? 4 : 0) | (y > 0 ? 8 : 0))
+    feedFour(this, x < 0, x > 0, y < 0, y > 0)
+    this.touch()
+  }
+  down(p) { this.move(p); this.touch() }
+  up() { this.push(0, 0); this.touch() }
+  move(p) {
+    const s = this.shape(this.u), dx = p.x - s.x, dy = p.y - s.y
+    // The very middle is no arrow at all.
+    if (Math.hypot(dx, dy) < s.r * 0.2) return this.push(0, 0)
+    const part = this.ways === 4 ? 4 : 8, turn = Math.round(Math.atan2(dy, dx) / (TAU / part)) * (TAU / part)
+    this.push(Math.round(Math.cos(turn)), Math.round(Math.sin(turn)))
+  }
+  draw(g, u) {
+    const s = this.shape(u), arm = s.r * 0.36, r = s.r - 2 * u
+    if (this.label) words(g, this.label, this.x + this.w / 2, this.y + 12 * u, 12 * u, THEME.dim, 'center', '', this.w - 6 * u)
+    // A cross: two bars, one across and one down.
+    const cross = () => {
+      g.beginPath()
+      for (const [x, y, w, h] of [[s.x - r, s.y - arm, 2 * r, 2 * arm], [s.x - arm, s.y - r, 2 * arm, 2 * r]]) {
+        if (g.roundRect) g.roundRect(x, y, w, h, 9 * u)
+        else g.rect(x, y, w, h)
+      }
+    }
+    cross()
+    g.fillStyle = THEME.knob
+    g.fill()
+    const lit = [this.jx > 0, this.jy > 0, this.jx < 0, this.jy < 0]
+    ;[[1, 0], [0, 1], [-1, 0], [0, -1]].forEach(([c, sn], i) => {
+      if (lit[i]) {
+        // The arm that is pressed is lit to its end.
+        g.save()
+        cross()
+        g.clip()
+        g.fillStyle = this.accent
+        g.fillRect(s.x + (c ? (c > 0 ? arm : -r) : -arm), s.y + (sn ? (sn > 0 ? arm : -r) : -arm), c ? r - arm : 2 * arm, sn ? r - arm : 2 * arm)
+        g.restore()
+      }
+      const far = r - 11 * u, back = far - 12 * u, half = 9 * u
+      g.fillStyle = lit[i] ? THEME.well : THEME.dim
+      g.beginPath()
+      g.moveTo(s.x + c * far, s.y + sn * far)
+      g.lineTo(s.x + c * back - sn * half, s.y + sn * back + c * half)
+      g.lineTo(s.x + c * back + sn * half, s.y + sn * back - c * half)
+      g.fill()
+    })
+    g.fillStyle = THEME.well
+    g.beginPath(); g.arc(s.x, s.y, arm * 0.42, 0, TAU); g.fill()
+  }
+}
+/**
+ * A ROUND BUTTON, as a game pad's A and B are. It is a button in every way (`fire.pressed` once
+ * for each press, `fire.held` while it is down), and with `key: "space"` it holds that key down
+ * for the scene while it is pressed.
+ */
+class ActionButton extends Button {
+  constructor(panel, kind, spec) {
+    super(panel, kind, spec)
+    this.key = spec.key || null
+  }
+  scaleOf() { return 1 }
+  get diameter() { return sized(this.size, 52, 66, 88) }
+  natural(u) { return [(this.diameter + 14) * u, (this.diameter + 14) * u] }
+  down(p) { if (this.key) feedKey(this, this.key, true); super.down(p) }
+  up(p) { if (this.key) feedKey(this, this.key, false); super.up(p) }
+  draw(g, u) {
+    const cx = this.x + this.w / 2, cy = this.y + this.h / 2, r = this.diameter * u / 2
+    g.beginPath(); g.arc(cx, cy, r - 1.5 * u, 0, TAU)
+    g.fillStyle = this.held ? this.accent : THEME.knob
+    g.fill()
+    g.strokeStyle = this.accent
+    g.lineWidth = 2.5 * u
+    g.stroke()
+    g.font = `700 ${r * 0.8}px ${THEME.font}`
+    const long = g.measureText(this.label).width > r * 1.3
+    words(g, this.label, cx, cy + 1 * u, long ? Math.max(11 * u, r * 0.42) : r * 0.8, this.held ? THEME.well : THEME.text, 'center', '700', 2 * r - 12 * u)
+  }
+}
+
+Object.assign(KINDS, { joystick: Joystick, dpad: Dpad, actionButton: ActionButton })
 Object.assign(KINDS, { number: NumberBox, textBox: TextBox, readout: Readout, checkbox: Checkbox, choose: Choose, radio: Radio, dropdown: Dropdown,
   xyPad: XYPad, colourPicker: ColourPicker, progress: Progress, light: Light, busy: Busy, rangeSlider: RangeSlider, fader: Fader })
 for (const kind of ['readout', 'progress', 'light', 'busy']) SLIDES.add(kind)
@@ -4152,6 +4391,12 @@ function more(panel) {
     rangeSlider: make('rangeSlider', spanned),
     /** An upright slider with the look of a mixing desk's: fader("volume", lead, "volume"). */
     fader: make('fader', ranged),
+    /** A stick for a thumb: stick = joystick(), then x += stick.x * speed. Options: floating, asKeys, size. */
+    joystick: make('joystick', ([a, b]) => (typeof a === 'string' ? { ...b, label: a } : { ...a })),
+    /** A pad of arrows: pad = dpad({ asKeys: true }), then pad.left, pad.x. Options: ways (4 or 8), asKeys, size. */
+    dpad: make('dpad', ([a, b]) => (typeof a === 'string' ? { ...b, label: a } : { ...a })),
+    /** A round button: fire = actionButton("A"), then fire.pressed. actionButton("A", { key: "space" }) holds that key down for the scene. */
+    actionButton: make('actionButton', ([label, a, b]) => (typeof a === 'function' ? { ...b, label, onPress: a } : { ...a, label })),
   }
 }
 
@@ -4372,6 +4617,10 @@ const light = (...args) => dials().light(...args)
 const busy = (...args) => dials().busy(...args)
 const rangeSlider = (...args) => dials().rangeSlider(...args)
 const fader = (...args) => dials().fader(...args)
+const joystick = (...args) => dials().joystick(...args)
+const dpad = (...args) => dials().dpad(...args)
+const actionButton = (...args) => dials().actionButton(...args)
 
 export { dials, dial, slider, button, toggle, select, rotary, keyboard, scope, meter, label, group, row, column, grid, page, spacer, wrap, layout, room, over, theme, version,
-  number, stepper, textBox, readout, checkbox, choose, radio, dropdown, xyPad, colourPicker, colorPicker, progress, light, busy, rangeSlider, fader }
+  number, stepper, textBox, readout, checkbox, choose, radio, dropdown, xyPad, colourPicker, colorPicker, progress, light, busy, rangeSlider, fader,
+  joystick, dpad, actionButton }

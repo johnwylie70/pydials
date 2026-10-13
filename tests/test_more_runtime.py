@@ -176,3 +176,23 @@ def test_a_slider_with_two_handles_is_a_low_and_a_high_and_a_fader_is_a_number()
     assert sent(r, "set") == [[1, "value", [80, 80]]]
     r = tick({"c": [1, [30, 60]]})
     assert r["out"].strip() == "[60, 60] [(30, 60)]"     # update() has run again: the low end is put as far up as the high one
+
+
+def test_a_joystick_a_pad_of_arrows_and_a_round_button_are_heard():
+    r = start("""
+        from pydials import *
+        heard = []
+        stick = joystick(floating=True)
+        pad = dpad(as_keys=True, ways=4, on_change=lambda x, y: heard.append((x, y)))
+        fire = action_button("A", key="space")
+        def update(dt):
+            print(stick.x, stick.y, round(stick.distance, 2), pad.left, pad.up, pad.x, pad.y, fire.held, fire.pressed, heard)
+    """)
+    assert r["error"] is None
+    assert made(r) == [("joystick", 1, {"floating": True}), ("dpad", 2, {"ways": 4, "as_keys": True}),
+                       ("actionButton", 3, {"label": "A", "key": "space"})]
+    assert r["out"].strip() == "0.0 0.0 0.0 False False 0 0 False False []"
+    r = tick({"c": [1, [0.6, -0.8], 2, 5, 3, True]})
+    assert r["out"].strip() == "0.6 -0.8 1.0 True True -1 -1 True True [(-1, -1)]"
+    r = tick({"c": [1, [0, 0], 2, 0, 3, False]})
+    assert r["out"].strip() == "0 0 0.0 False False 0 0 False False [(-1, -1), (0, 0)]"

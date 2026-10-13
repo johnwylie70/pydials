@@ -95,3 +95,40 @@ def update(dt):
     w.wait("JSON.stringify(window.result) === '[25,80,\"blue\",100,[20,80]]' && %s.items[4].done === 1 && %s.items[5].on" % (PANEL, PANEL))
     w.clean()
     w.page.close()
+
+
+def test_a_game_written_for_the_arrow_keys_is_played_with_a_pad_of_arrows_and_a_stick_is_pushed(browser, pyctures_run, tmp_path):
+    w = Watched(browser, pyctures_run(scene_file(tmp_path, """
+from pyctures import *
+from pydials import *
+
+pad = dpad(as_keys=True)
+stick = joystick()
+jump = action_button("jump", key="space")
+x = 0
+
+def update(dt):
+    global x
+    if "ArrowRight" in keys:
+        x += 1
+    js.result = [x > 0, sorted(keys), pad.right, pad.x, round(stick.x, 1), round(stick.y, 1), jump.held]
+""")).url)
+    w.ready(3)
+    w.wait("JSON.stringify(window.result) === '[false,[],false,0,0,0,false]'")
+    w.page.mouse.move(*w.spot(0, 0.9, 0.5))                     # the pad's right arrow, held
+    w.page.mouse.down()
+    w.wait("JSON.stringify(window.result) === '[true,[\"ArrowRight\"],true,1,0,0,false]'")
+    w.page.mouse.up()
+    w.wait("JSON.stringify(window.result.slice(1)) === '[[],false,0,0,0,false]'")
+    x, y = w.spot(1)
+    w.page.mouse.move(x, y)
+    w.page.mouse.down()
+    w.page.mouse.move(x, y + 300, steps=3)                      # the stick, pulled down as far as it goes
+    w.wait("JSON.stringify(window.result.slice(4)) === '[0,1,false]'")
+    w.page.mouse.up()
+    w.page.mouse.move(*w.spot(2))
+    w.page.mouse.down()
+    w.wait("JSON.stringify(window.result.slice(1)) === '[[\" \"],false,0,0,0,true]'")
+    w.page.mouse.up()
+    w.clean()
+    w.page.close()

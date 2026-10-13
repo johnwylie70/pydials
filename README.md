@@ -431,6 +431,45 @@ def draw():
 
 **Keys.** The control you touched last takes the arrow keys: on a number box they step it (Shift ten at a time, Home and End go to the ends, Enter types). Space ticks a checkbox, the arrows move among choices, and on a dropdown Enter opens the list, the arrows move through it, Enter picks and Escape closes. The arrows move an XY pad's dot and the handle of a two-handled slider that was touched last. Tab goes to the next control that takes keys.
 
+### For games
+
+![A joystick pushed up and to the right, a pad of arrows with the left one lit, and two round buttons, B and A, with A pressed](docs/images/joystick-dpad-buttons.png)
+
+```python
+stick = joystick()
+fire = action_button("A")
+x, y = 200, 200
+
+def update(dt):
+    global x, y
+    x += stick.x * 300 * dt                  # each from -1 to 1, and 0 when you let go
+    y += stick.y * 300 * dt
+    if fire.pressed:
+        shoot()
+```
+
+Each finger holds its own control, so one thumb steers while the other fires.
+
+| | |
+|---|---|
+| `joystick()` | A stick for a thumb, which springs back when you let go. `stick.x` and `stick.y` are each from -1 to 1 in the scene's own directions (y goes down the picture, so `y += stick.y * speed` goes where the thumb pushes). `stick.angle` is the way it is pushed (in radians) and `stick.distance` how far, from 0 to 1. Options: `floating=True` (it appears where the thumb lands, anywhere in its box: give `width=` and `height=`), `as_keys=True`, `size=`, `on_change(x, y)`. |
+| `dpad()` | A pad of arrows. `pad.left`, `pad.right`, `pad.up` and `pad.down` are True while pressed, and `pad.x` and `pad.y` are -1, 0 or 1. A thumb slides from one arrow to the next; between two, both are pressed, unless `ways=4`. |
+| `action_button("A")` | A round button: `fire.pressed` is True once for each press and `fire.held` while it is down, as for any button. `key="space"` holds that key down for the scene while it is pressed. |
+
+**A game written for the keyboard, on a phone.** `dpad(as_keys=True)` holds the arrow keys down for the scene (`"wasd"` for those keys), so a game that asks `"ArrowLeft" in keys` is played by touch with not a line changed:
+
+```python
+dpad(as_keys=True)
+action_button("jump", key="space")
+
+def update(dt):
+    global x
+    if "ArrowLeft" in keys: x -= 300 * dt    # the keyboard, or the pad
+    if " " in keys: jump()
+```
+
+For a game, put the controls in a strip and draw in the room that is left: `with group(at="bottom", plate=False):` and `room()`. `examples/joystick_game.py` is a whole game made this way.
+
 ## Targets
 
 A control can be tied to anything. No library is named: a target is known by what it can do, and every part is optional.
