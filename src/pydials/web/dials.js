@@ -71,7 +71,7 @@ const THEME = {
 }
 
 /** A spec's keys in one spelling: on_change is onChange, color is colour. */
-const SPELLING = { color: 'colour', on_change: 'onChange', on_press: 'onPress', on_release: 'onRelease', on_note_on: 'onNoteOn', on_note_off: 'onNoteOff', title: 'label' }
+const SPELLING = { color: 'colour', on_change: 'onChange', on_press: 'onPress', on_release: 'onRelease', on_note_on: 'onNoteOn', on_note_off: 'onNoteOff', title: 'label', show_value: 'showValue', log_from: 'logFrom', min_scale: 'minScale', max_scale: 'maxScale', on_resize: 'onResize' }
 const spelled = (spec) => {
   const out = {}
   for (const key in spec) out[SPELLING[key] || key] = spec[key]
@@ -610,6 +610,10 @@ const TAP_REACH = 6
  * next, then clicks over), or tap a notch or a name to go straight there. Two taps put it back.
  */
 class Rotary extends Select {
+  constructor(panel, kind, spec) {
+    super(panel, kind, spec)
+    this.showValue = spec.showValue
+  }
   scaleOf() { return 1 }
   stretch() { return [0.9, 1] }
   get knob() { return sized(this.size, 36, 48, 64) }
@@ -625,16 +629,18 @@ class Rotary extends Select {
       for (const choice of this.choices) this.side = Math.max(this.side, g.measureText(String(choice)).width)
       this.side = Math.min(this.side, this.nameRoom * u) + 8 * u
     }
-    // With the names round it, the one it is on is lit there: it is not written again underneath.
-    return [Math.max(76 * u, across + 26 * u + 2 * this.side), across + (this.named ? 60 : 50) * u]
+    // With the names round it, the one it is on is lit there: it is not written again underneath, unless asked for.
+    return [Math.max(76 * u, across + 26 * u + 2 * this.side), across + (this.named ? (this.reads ? 78 : 66) : 50) * u]
   }
   /** Where notch i is round the knob: an angle, from lower left round the top to lower right. */
   angle(i) {
     const n = this.choices.length
     return TAU * 0.375 + TAU * 0.75 * (n > 1 ? i / (n - 1) : 0.5)
   }
-  /** The middle of the knob: a little lower when names are written round it, to leave room for the one at the top. */
-  centre(u) { return [this.x + this.w / 2, this.y + (this.named ? 28 : 20) * u + (this.h - (this.named ? 42 : 40) * u) / 2] }
+  /** The middle of the knob: where a dial's is in a box as tall, so that a rotary and the dials beside it are on one line. */
+  centre(u) { return [this.x + this.w / 2, this.y + 20 * u + (this.h - 40 * u) / 2] }
+  /** Is the choice written under the knob? Where no names are round it, unless told not to (`showValue: false`); where they are, only if asked (`showValue: true`). */
+  get reads() { return this.showValue ?? !this.named }
   go(i) {
     i = clamp(i, 0, this.choices.length - 1)
     if (i === this.i) return
@@ -696,7 +702,8 @@ class Rotary extends Select {
       // Left of the knob a name ends at its notch, right of it a name starts there, and at the top it is centred.
       const side = Math.abs(c) < 0.25 ? 'center' : c < 0 ? 'right' : 'left'
       const most = side === 'center' ? this.w - 8 * u : this.side - 6 * u
-      const text = String(this.choices[i]), tx = cx + c * (r + 8 * u), ty = cy + sn * (r + 9 * u)
+      // (The name at the top sits close to the knob, to stay clear of the title above it.)
+      const text = String(this.choices[i]), tx = cx + c * (r + 8 * u), ty = cy + sn * (r + (side === 'center' ? 7 : 9) * u)
       g.font = `${on ? '600 ' : ''}${10 * u}px ${THEME.font}`
       const wide = Math.min(most, g.measureText(text).width)
       words(g, text, tx, ty, 10 * u, on ? THEME.text : THEME.dim, side, on ? '600' : '', most)
@@ -709,7 +716,7 @@ class Rotary extends Select {
     g.moveTo(cx + Math.cos(a) * (r - 18 * u), cy + Math.sin(a) * (r - 18 * u))
     g.lineTo(cx + Math.cos(a) * (r - 9 * u), cy + Math.sin(a) * (r - 9 * u))
     g.stroke()
-    if (!this.named) words(g, String(this.value ?? ''), cx, this.y + this.h - 11 * u, 12 * u, THEME.text, 'center', '600', this.w - 6 * u)
+    if (this.reads) words(g, String(this.value ?? ''), cx, this.y + this.h - 11 * u, 12 * u, THEME.text, 'center', '600', this.w - 6 * u)
   }
 }
 

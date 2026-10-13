@@ -906,14 +906,15 @@ def select(label="", a=None, b=None, *, value=None, style=None, x=None, y=None, 
                                       on_change=on_change))
 
 
-def rotary(label="", a=None, b=None, *, value=None, x=None, y=None, size=None, share=None, span=None, colour=None,
-           color=None, on_change=None):
+def rotary(label="", a=None, b=None, *, value=None, show_value=None, x=None, y=None, size=None, share=None, span=None,
+           colour=None, color=None, on_change=None):
     """A knob that clicks between a few choices, as the one on a synth that picks a waveform does.
 
     rotary("mode", ["room", "hall", "plate", "spring"], "hall"), or rotary("wave", lead, "wave") for a setting
     that has choices. Drag to turn it from notch to notch, or tap a name; `mode.value` is the choice and
-    `mode.index` its place. The names are written round it where there is room: size="large" shows more."""
-    return Rotary(label, a, b, _options(value=value, x=x, y=y, size=size, share=share, span=span, colour=colour, color=color,
+    `mode.index` its place. The names are written round it where there is room: size="large" shows more. The
+    choice is written under the knob only where no names are round it; show_value=True or False says otherwise."""
+    return Rotary(label, a, b, _options(value=value, showValue=show_value, x=x, y=y, size=size, share=share, span=span, colour=colour, color=color,
                                         on_change=on_change))
 
 

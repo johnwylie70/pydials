@@ -325,10 +325,12 @@ def test_a_rotary_is_a_select_drawn_as_a_knob_and_python_knows_its_choice():
         from pydials import *
         mode = rotary("mode", ["room", "hall", "plate", "spring"], "hall", size="large", on_change=print)
         other = select("kind", ["a", "b"], style="rotary")
+        rotary("read", ["a", "b"], show_value=True)
         def update(dt):
             print(mode.value, mode.index, other.value)
     """)
-    assert [(m[0], m[2]) for m in made(r)] == [
+    assert made(r)[2][2]["showValue"] is True
+    assert [(m[0], m[2]) for m in made(r)][:2] == [
         ("rotary", {"value": "hall", "size": "large", "label": "mode", "choices": ["room", "hall", "plate", "spring"]}),
         ("rotary", {"label": "kind", "choices": ["a", "b"], "value": "a"})]
     assert out(r) == ["hall", "1", "a"]

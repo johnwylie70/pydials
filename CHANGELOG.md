@@ -4,7 +4,7 @@
 
 - The keyboard keeps its height: when everything does not fit, the scope is made shorter and then the plates are moved, under a scope and a keyboard that stay put. `keyboard(lead, height=200)` is kept to.
 - A dial turned by ratio may start at 0 (`{"min": 0, "log": True}` from a target's `describe`), and `labels={0: "auto"}` shows a name in place of a value.
-- A rotary with its names round it no longer names its choice a second time underneath.
+- A rotary with its names round it no longer names its choice a second time underneath (`show_value=True` or `False` says otherwise), and its title and knob are on a line with the dials beside it.
 - Moving the plates is what a panel does when there is more than fits: they carry on a little when a finger lets go, and a finger going up or down a slider that lies across moves the plates.
 - `layout(fit="width")` fills the width whichever way: rows as written, drawn smaller to fit or bigger where there is room, no bigger than `max_scale=` (1.6).
 - A target in the page that says its choices or its range changed (`onChange`) has its control ask again, and Python is told the new choices and range.

@@ -341,7 +341,7 @@ All of them take `x=` and `y=` (to place it by hand: its top left corner) and `c
 | `slider(…)` | The same as a dial, as a slider. `vertical=True` stands it upright. |
 | `button(label, on_press)` | A button. `fire.pressed` is true once for each press; `fire.held` while it is down. |
 | `toggle(label, on)` | A switch: `if mute:`. `toggle(label, target, "setting")` ties it to a setting. |
-| `rotary(label, choices, start)` | A knob that clicks between a few choices, with a notch for each and their names round it where there is room (a larger one shows more of each; with more than eight, only the one it is on). Drag to turn it from notch to notch, or tap a name. `mode.value`, `mode.index`, and `rotary(label, target, "setting")`, as a select. `select(…, style="rotary")` is the same. |
+| `rotary(label, choices, start)` | A knob that clicks between a few choices, with a notch for each and their names round it where there is room (a larger one shows more of each; with more than eight, only the one it is on). Drag to turn it from notch to notch, or tap a name. `mode.value`, `mode.index`, and `rotary(label, target, "setting")`, as a select. The choice is written under the knob only where no names are round it; `show_value=True` or `False` says otherwise. `select(…, style="rotary")` is the same. |
 | `select(label, choices, start)` | One of a list, stepped through with the arrows at its sides. `wave.value` is the choice, `wave.index` its place. `select(label, target, "setting")` takes the choices from the target. |
 | `keyboard(target, octave=4, octaves=2)` | A piano keyboard along the bottom. `piano.notes` is what is held now (60 is middle C). Also `keys=False` (no computer keys), `hints=False` (no letters on the keys), `animate=False` (the keys jump to a new octave, not slide), `on_note_on=` (given the note and how hard), `on_note_off=`. It never shows so many octaves that a key is too narrow to play. |
 | `scope(source)` | A line of numbers, live: a target with `samples()`, a function that returns a list, or a list. With no source, `graph.push(value)` adds a point. Also `min=`, `max=`, `width=`, `height=`, `points=`. |
@@ -353,6 +353,8 @@ All of them take `x=` and `y=` (to place it by hand: its top left corner) and `c
 | `theme(accent="deepskyblue")` | The colours. |
 
 Every control has `value`, `remove()` and `place(x, y)`. `on_change(value)` is called when a hand changes it.
+
+![Rotaries: a small one with its choice written under it, usual and large ones with the names round the knob, one with two choices, five, eight and twelve, and one beside dials](docs/images/rotary.png)
 
 ## Targets
 
