@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- `rotary("mode", ["room", "hall", "plate", "spring"], "hall")`, or `rotary("wave", lead, "wave")`: a knob that clicks between a few choices, with a notch for each and their names round it where there is room. `select(…, style="rotary")` is the same.
+- The piano keys slide to a new octave (the arrows, Z and X, an arrow held down, or a finger dragging the strip above the keys). `keyboard(lead, animate=False)` makes them jump.
+- Wrapping is yours to say: `layout(wrap=False)` keeps every row as written and draws the whole panel at one scale that fits the widest to the width (not below `min_scale=`); `layout(wrap=True)` makes every `row()` a new line; `layout(columns=3)`, or `columns={"phone": 1, "tablet": 2, "wide": 3}`; `with group("shape", wrap=False):` never splits; `with row(wrap=False):` keeps the groups in it side by side; `wrap()` marks where a line may be split.
+- `layout(size=(900, 640))`: a panel of a set size, laid out once and made to fit any screen whole, keeping its shape.
+- A size may be so many times the usual (`size=1.5`), and is kept at every scale.
+- `layout()` gives back the picture's `width` and `height` and the `scale`, as the page last said them, and `layout(on_resize=fn)` is called when they change.
 - Layout. Controls are kept on titled plates: a `label` made just before some controls is their heading, and `with group("filter"):` (or `group("filter")` and then the controls) says so with options. Plates wrap whole, so a heading is never left behind; wrapped lines are balanced; the plates of a line share its width. Scenes written with `label` and `row()` alone are laid out this way with no change.
 - Plates with titles fill the width: they stand side by side in balanced lines set against both edges of the picture, as many to a line as fit, and a `row()` between them says where a line should end when one has to. A few controls with no titles keep their own width and their rows as written.
 - `with row():`, `with column():` and `with grid(3):` arrange what is inside a group, and nest. `spacer()` takes the room left over. Any control takes `size="small"` or `"large"`, `share=` and `span=`. A group takes `colour=`, `columns=`, `gap=`, `align=`, `dividers=` and `plate=`.

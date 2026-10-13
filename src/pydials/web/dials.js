@@ -2084,9 +2084,22 @@ class Panel {
     const hold = options.wrap === false || (options.fit === 'width' && !set)
     let u = this.scale, squeeze = this.squeeze || 0
     if (!quick) {
+      // ONE SCALE FOR THE WHOLE PANEL. A line that may not wrap and is too wide makes everything smaller until it
+      // fits the width, so a knob is the same size on every line. Not below `minScale` (by default, the smallest
+      // a finger can work comfortably): there the lines are left too wide, and are moved from side to side.
+      const floor = options.minScale ?? (this.coarse ? FINGER_LEAST : MOUSE_LEAST)
+      const narrowed = (size, bar) => {
+        this.compose(size, bar ? (this.coarse ? 18 : 12) * size : 0)
+        for (let tries = 0; tries < 6 && this.over > 0.5 && size > Math.min(size, floor) + 1e-6; tries++) {
+          size = Math.max(Math.min(size, floor), size * this.roomWide / (this.roomWide + this.over) * 0.998)
+          this.compose(size, bar ? (this.coarse ? 18 : 12) * size : 0)
+        }
+        return size
+      }
       // Of the sizes at which all fits, the one that makes the fewest lines (a row stays a row if a little
       // smaller will keep it one), and of those the biggest. If none does, the same again with the keyboard
-      // and the scope above it less tall. Told not to wrap, there is nothing to choose: the usual size.
+      // and the scope above it less tall, and then with that scope put away. Told not to wrap, there is one
+      // size to try: the usual one, made as much smaller as the widest row needs.
       const sizes = []
       if (!hold) for (let step = 0; usual * (1 - 0.05 * step) > least + 1e-6; step++) sizes.push(usual * (1 - 0.05 * step))
       sizes.push(hold ? usual : least)
@@ -2094,7 +2107,8 @@ class Panel {
       for (squeeze of [0, 1, 2]) {
         this.squeeze = squeeze
         let fewest = Infinity
-        for (const size of sizes) {
+        for (let size of sizes) {
+          if (hold) size = narrowed(size, false)
           const got = this.compose(size, 0)
           if (got.fits && got.lines < fewest) { fewest = got.lines; u = size }
         }
@@ -2102,26 +2116,14 @@ class Panel {
       }
       if (!u) {
         // Nothing fits: the plates will be moved to be seen. The scope stays if that leaves room to see a plate and a half.
-        u = hold ? usual : Math.max(least, usual * 0.9)
         this.squeeze = squeeze = 1
+        u = hold ? narrowed(usual, true) : Math.max(least, usual * 0.9)
         this.compose(u, 0)
         if (this.seen < SEEN_LEAST) squeeze = 2
       }
-      // ONE SCALE FOR THE WHOLE PANEL. A line that may not wrap and is too wide makes everything smaller until it
-      // fits the width, so a knob is the same size on every line. Not below `minScale` (by default, the smallest
-      // a finger can work): there the lines are left too wide, and are moved from side to side.
       this.squeeze = squeeze
-      const floor = Math.min(u, options.minScale ?? (this.coarse ? FINGER_LEAST : MOUSE_LEAST))
-      // (Twice: once the plates have to be moved up and down, the bar beside them takes a little of the width.)
-      for (const barred of [false, true]) {
-        const bar = () => (barred ? (this.coarse ? 18 : 12) * u : 0)
-        if (barred && this.compose(u, 0).fits) break
-        this.compose(u, bar())
-        for (let tries = 0; tries < 6 && this.over > 0.5 && u > floor + 1e-6; tries++) {
-          u = Math.max(floor, u * this.roomWide / (this.roomWide + this.over) * 0.998)
-          this.compose(u, bar())
-        }
-      }
+      // A group told not to wrap, in a panel that otherwise may: the same one scale, found the same way.
+      u = narrowed(u, !this.compose(u, 0).fits)
     }
     this.scale = u
     this.squeeze = squeeze || 0
