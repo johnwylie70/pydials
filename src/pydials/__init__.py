@@ -2095,6 +2095,7 @@ class Steps(_Bound):
         self._tie(spec, target, param)
         if "target" in spec and param is None:
             del spec["param"]                          # the page finds it by name
+            self._param = self._names[0]               # and the Python object that stands for the target hears it by its Python name
         if self._target is not None:
             there = _read(self._target, self._param)
             self._as_text = isinstance(there, str)
@@ -2215,6 +2216,7 @@ class ArpPattern(_Bound):
         self._tie(spec, target, param)
         if "target" in spec and param is None:
             del spec["param"]
+            self._param = "arp_pattern"
         if self._target is not None:
             there = _read(self._target, self._param)
             self._as_text = isinstance(there, str)
