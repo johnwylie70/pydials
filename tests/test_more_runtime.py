@@ -196,3 +196,58 @@ def test_a_joystick_a_pad_of_arrows_and_a_round_button_are_heard():
     assert r["out"].strip() == "0.6 -0.8 1.0 True True -1 -1 True True [(-1, -1)]"
     r = tick({"c": [1, [0, 0], 2, 0, 3, False]})
     assert r["out"].strip() == "0 0 0.0 False False 0 0 False False [(-1, -1), (0, 0)]"
+
+
+def test_an_envelope_is_four_numbers_and_a_python_target_has_all_four_set():
+    r = start("""
+        from pydials import *
+        heard = []
+        lead = {"attack": 0.02, "decay": 0.3, "sustain": 0.6, "release": 0.8}
+        shape = envelope("shape", lead, on_change=lambda a, d, s, r: heard.append((a, d, s, r)))
+        alone = envelope("alone", attack=0.2)
+        print(shape.attack, shape.release, shape.value, alone.value)
+        def update(dt):
+            alone.sustain = 0.25
+            print(lead, heard)
+    """)
+    assert r["error"] is None
+    # (An object inside the options is sent wrapped, as the options themselves are.)
+    unwrapped = [(kind, i, {k: v.get("$d", v) if isinstance(v, dict) else v for k, v in spec.items()}) for kind, i, spec in made(r)]
+    assert unwrapped == [("envelope", 1, {"label": "shape", "attack": {"min": 0, "max": 2, "value": 0.02}, "decay": {"min": 0, "max": 2, "value": 0.3},
+                                        "sustain": {"min": 0, "max": 1, "value": 0.6}, "release": {"min": 0, "max": 2, "value": 0.8}}),
+                       ("envelope", 2, {"label": "alone", "attack": 0.2})]
+    assert r["out"].splitlines()[0] == "0.02 0.8 [0.02, 0.3, 0.6, 0.8] [0.2, 0.3, 0.7, 0.5]"
+    assert sent(r, "set") == [[2, "value", [0.2, 0.3, 0.25, 0.5]]]
+    r = tick({"c": [1, [1, 0.5, 0.75, 2]]})
+    assert r["out"].strip() == "{'attack': 1, 'decay': 0.5, 'sustain': 0.75, 'release': 2} [(1, 0.5, 0.75, 2)]"
+
+
+def test_a_grid_of_steps_pads_and_a_wheel_are_sent_and_heard():
+    r = start("""
+        from pydials import *
+        heard = []
+        class Kit:
+            def note_on(self, note, velocity): heard.append(("on", note))
+            def note_off(self, note): heard.append(("off", note))
+        grid = step_grid("drums", 8, ["kick", "snare"], on_change=lambda row, step, on: heard.append((row, step, on)))
+        kit = pads("kit", ["kick", "snare", "hat", "boom"], Kit(), on_note_on=lambda note, velocity, name: heard.append(name))
+        bend = pitch_wheel("bend")
+        grid.put("kick", 0)
+        grid.put("snare", 4, 0.5)
+        grid.step = 9
+        print(grid.value, grid.get("kick", 0), grid.row("snare"), grid.step, kit.notes, bend.value, bend.min)
+        def update(dt):
+            kit.flash("hat")
+            print(grid.get("kick", 3), kit.held, heard)
+    """)
+    assert r["error"] is None
+    assert made(r) == [("stepGrid", 1, {"label": "drums", "steps": 8, "rows": ["kick", "snare"]}),
+                       ("pads", 2, {"label": "kit", "pads": ["kick", "snare", "hat", "boom"], "notes": [36, 38, 42, 39]}),
+                       ("wheel", 3, {"spring": True, "label": "bend", "min": -1, "max": 1, "value": 0, "default": 0})]
+    assert r["out"].splitlines()[0] == "[[1, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0.5, 0, 0, 0]] 1 [0, 0, 0, 0, 0.5, 0, 0, 0] 1 [36, 38, 42, 39] 0 -1"
+    assert sent(r, "call")[:2] == [[1, "put", 0, 0, 1], [1, "put", 1, 4, 0.5]] and [2, "flash", "hat"] in sent(r, "call")
+    assert sent(r, "set") == [[1, "step", 1]]
+    r = tick({"c": [1, [0, 3, 1]], "n": [2, 38, 0.9]})
+    assert r["out"].strip() == "1 ['snare'] [('kick', 3, 1), ('on', 38), 'snare']"
+    r = tick({"n": [2, 38, 0]})
+    assert r["out"].strip() == "1 [] [('kick', 3, 1), ('on', 38), 'snare', ('off', 38)]"

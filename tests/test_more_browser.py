@@ -132,3 +132,37 @@ def update(dt):
     w.page.mouse.up()
     w.clean()
     w.page.close()
+
+
+def test_a_step_is_turned_on_a_pad_is_hit_and_a_corner_of_the_shape_is_dragged(browser, pyctures_run, tmp_path):
+    w = Watched(browser, pyctures_run(scene_file(tmp_path, """
+from pyctures import *
+from pydials import *
+
+heard = []
+lead = {"attack": 0.5, "decay": 0.5, "sustain": 0.5, "release": 0.5}
+grid = step_grid("drums", 8, ["kick", "snare"])
+kit = pads("kit", ["kick", "snare"], on_note_on=lambda note, velocity, name: heard.append(name))
+shape = envelope("shape", lead)
+grid.step = 2
+
+def update(dt):
+    js.result = [grid.row("snare"), kit.held, heard, round(lead["release"], 1)]
+""")).url)
+    w.ready(3)
+    w.wait("JSON.stringify(window.result) === '[[0,0,0,0,0,0,0,0],[],[],0.5]' && %s.items[0].step === 2" % PANEL)
+    cell = "(() => { const c = document.querySelector('[data-pyctures-src] canvas'), g = c[Symbol.for('dials.panel')].items[0], s = g.spotOf(1, 3, g.u), b = c.getBoundingClientRect(); return [b.left + s.x + s.w / 2, b.top + s.y + s.h / 2] })()"
+    w.page.mouse.click(*w.page.evaluate(cell))                  # the snare's fourth step
+    w.page.mouse.move(*w.spot(1, 0.75, 0.6))                    # the second pad, held
+    w.page.mouse.down()
+    w.wait("JSON.stringify(window.result.slice(0, 3)) === '[[0,0,0,1,0,0,0,0],[\"snare\"],[\"snare\"]]'")
+    w.page.mouse.up()
+    corner = "(() => { const c = document.querySelector('[data-pyctures-src] canvas'), e = c[Symbol.for('dials.panel')].items[2], p = e.shape(e.u).points[4], b = c.getBoundingClientRect(); return [b.left + p[0], b.top + p[1]] })()"
+    x, y = w.page.evaluate(corner)                              # the last corner: the release
+    w.page.mouse.move(x, y)
+    w.page.mouse.down()
+    w.page.mouse.move(x + 900, y, steps=3)
+    w.page.mouse.up()
+    w.wait("JSON.stringify(window.result) === '[[0,0,0,1,0,0,0,0],[],[\"snare\"],2]'")
+    w.clean()
+    w.page.close()

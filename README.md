@@ -470,6 +470,31 @@ def update(dt):
 
 For a game, put the controls in a strip and draw in the room that is left: `with group(at="bottom", plate=False):` and `room()`. `examples/joystick_game.py` is a whole game made this way.
 
+### For music
+
+![The shape of a note as a graph with four corners, a pitch wheel and a mod wheel, four pads with the kick held, and a grid of sixteen steps for kick, snare and hat with the fifth column lit](docs/images/envelope-steps-pads.png)
+
+```python
+envelope("shape", lead)                                 # lead's attack, decay, sustain and release
+grid = step_grid("drums", 16, ["kick", "snare", "hat"])
+kit = pads("kit", ["kick", "snare", "hat", "clap"], drums)
+
+def update(dt):
+    grid.step = beat % 16                               # light the column that is playing
+    if grid.get("kick", grid.step):
+        drums.note_on(36, 1)
+```
+
+| | |
+|---|---|
+| `envelope(label, target)` | How a note begins, settles, holds and dies away, as a graph whose corners you drag: the first sets the attack, the second the decay (across) and the sustain (up and down), the last the release. It finds the target's `attack`, `decay`, `sustain` and `release` by those names, or takes the four names: `envelope("shape", lead, "a", "d", "s", "r")`. With no target, `shape.attack` and the rest are numbers to use. Two taps put it back; `on_change(attack, decay, sustain, release)`. |
+| `step_grid(label, steps, rows)` | A grid of steps, each on or off: a row for each sound. A tap turns a step over, and a finger dragged along turns on (or off) every step it crosses. `grid.value` is the rows, each a list of 0 and 1; `grid.get("kick", 0)` reads one step and `grid.put("kick", 0)` writes one; `grid.row("kick")`, `grid.clear()`. `grid.step = 3` lights that column as the one playing. On a narrow screen a long row is put on two lines. Options: `value=` (the rows to start with), `velocity=True` (drag up or down on a step for how hard, 0 to 1), `on_change(row, step, on)`. |
+| `pads(label, names, target)` | Pads to hit, several at once. Each plays a note of the target for as long as it is held (`note_on(note, velocity)`, `note_off(note)`), harder the nearer its middle it is hit. Pads named for drums play those drums' notes (a kick is 36, a snare 38, a hat 42); others count up from 36, or are told with `notes=`. `kit.held` is the names of the pads held now; `kit.flash("kick")` lights one from your code; `kit.hit("kick")` and `kit.lift("kick")` play one. Options: `notes=`, `columns=`, `size=`, `on_note_on(note, velocity, name)`, `on_note_off(note, name)`. |
+| `pitch_wheel(label, target, "setting")` | A wheel that is rolled, and rolls back to where it started when you let go. Alone, `bend = pitch_wheel("bend")` runs from -1 to 1. |
+| `mod_wheel(…)`, `wheel(…)` | The same wheel, which stays where it is put (`spring=True` makes it roll back). Both are sliders in every other way. |
+
+`examples/drum_machine.py` is a drum machine made of these: a grid, pads, a tempo and the shape of each hit.
+
 ## Targets
 
 A control can be tied to anything. No library is named: a target is known by what it can do, and every part is optional.

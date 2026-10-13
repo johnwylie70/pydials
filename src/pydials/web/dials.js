@@ -3432,15 +3432,16 @@ class Axis {
   constructor(target, param, spec = {}) {
     this.target = target && param != null ? target : null
     this.param = param
-    const d = this.target ? describe(target, param) : {}
+    // `or`: what it is when neither the scene nor the target says.
+    const d = this.target ? describe(target, param) : {}, or = spec.or || {}
     this.name = spec.label ?? d.label ?? d.name ?? (param != null ? String(param) : '')
-    this.min = spec.min ?? d.min ?? 0
-    this.max = spec.max ?? d.max ?? 1
+    this.min = spec.min ?? d.min ?? or.min ?? 0
+    this.max = spec.max ?? d.max ?? or.max ?? 1
     this.step = spec.step ?? d.step ?? (d.kind === 'int' ? 1 : 0)
-    this.unit = unitOf(spec.unit ?? d.unit ?? '')
+    this.unit = unitOf(spec.unit ?? d.unit ?? or.unit ?? '')
     this.digits = spec.digits ?? d.digits
     this.log = this.min > 0 && this.max > this.min && (spec.log ?? d.log ?? (d.curve === 'log' || (this.unit === 'Hz' && this.max / this.min >= 100)))
-    const now = spec.value ?? (this.target ? readTarget(target, param) : undefined)
+    const now = spec.value ?? (this.target ? readTarget(target, param) : or.value)
     this.default = spec.default ?? d.default ?? (typeof now === 'number' ? now : this.fromPos(0.5))
     this.v = this.clean(typeof now === 'number' ? now : this.default)
     if (spec.value != null && this.target) writeTarget(target, param, this.v)
@@ -4305,7 +4306,386 @@ class ActionButton extends Button {
   }
 }
 
-Object.assign(KINDS, { joystick: Joystick, dpad: Dpad, actionButton: ActionButton })
+// --------------------------------------------------------------------------------------------
+// FOR MUSIC: the shape of a note drawn as a graph, a grid of steps, pads to hit and wheels.
+
+/** The four parts of a note's shape, and the names a target may give each. */
+const SHAPE = ['attack', 'decay', 'sustain', 'release']
+/** How much of the graph's width each timed part takes at its longest, and how much the held part always takes. */
+const SHAPE_PART = 0.27
+const SHAPE_HOLD = 0.19
+
+/**
+ * THE ENVELOPE: how a note begins, settles, holds and dies away, drawn as a graph whose corners are
+ * dragged. `envelope("shape", lead)` finds the target's attack, decay, sustain and release by those
+ * names (or is given the four names), and each corner sets them as it moves: the first corner the
+ * attack, the second the decay (across) and the sustain (up and down), the last the release.
+ * `shape.attack`, `shape.decay`, `shape.sustain` and `shape.release` are the numbers.
+ */
+class Envelope extends Control {
+  constructor(panel, kind, spec) {
+    super(panel, kind, spec)
+    this.target = spec.target || null
+    const names = spec.params || SHAPE
+    this.parts = SHAPE.map((part, i) => {
+      // A target may call its attack "attack", "env_attack" or "amp_attack".
+      let name = names[i]
+      if (this.target && !spec.params) name = [part, 'env_' + part, 'amp_' + part, part[0]].find((n) => method(this.target, 'describe') ? Object.keys(describe(this.target, n)).length : readTarget(this.target, n) !== undefined) ?? part
+      // A target that does not say its ranges is given these: up to two seconds, and a level from 0 to 1. With no target at all, a shape to start from.
+      const given = spec[part], or = part === 'sustain' ? { min: 0, max: 1 } : { min: 0, max: 2, unit: 's' }
+      if (!this.target) or.value = part === 'sustain' ? 0.7 : part === 'attack' ? 0.05 : part === 'decay' ? 0.3 : 0.5
+      return new Axis(this.target, this.target ? name : null, { ...(typeof given === 'number' ? { value: given } : given), label: part, or })
+    })
+    this.param = this.parts[0].param
+    this.many = false
+    this.grip = -1 // the corner that is held: 0 the attack's, 1 the decay's and sustain's, 2 the end of the hold, 3 the release's
+    for (const [i, part] of SHAPE.entries()) Object.defineProperty(this, part, { get: () => this.parts[i].v, set: (value) => { if (this.parts[i].put(value)) this.touch() } })
+  }
+  get value() { return this.parts.map((part) => part.v) }
+  set value(four) { let moved = 0; four.forEach((value, i) => { moved |= this.parts[i].put(value) }); if (moved) this.touch() }
+  get v() { return this.value }
+  scaleOf() { return 1 }
+  natural(u) { return [(this.wide || 230) * u, (this.tall || 150) * u] }
+  stretch() { return this.wide ? [1, 1] : [0.75, 1.3] }
+  /** The graph's box, and its five corners: the start, the top of the attack, the end of the decay, the end of the hold and the end. */
+  shape(u) {
+    const x = this.x + 12 * u, y = this.y + 28 * u, w = this.w - 24 * u, h = this.h - 54 * u
+    const [a, d, s, r] = this.parts.map((part) => part.pos)
+    const level = y + h * (1 - s), x1 = x + w * SHAPE_PART * a, x2 = x1 + w * SHAPE_PART * d, x3 = x2 + w * SHAPE_HOLD, x4 = x3 + w * SHAPE_PART * r
+    return { x, y, w, h, points: [[x, y + h], [x1, y], [x2, level], [x3, level], [x4, y + h]] }
+  }
+  /** Move a part by hand to a place from 0 to 1. Did anything change? */
+  slide(i, pos) { return this.parts[i].slide(pos) }
+  tell() {
+    if (this.onChange) this.onChange(...this.value, this)
+    this.panel.told.push(this.id, this.value)
+    this.touch()
+  }
+  reset() {
+    let moved = 0
+    for (const part of this.parts) moved |= part.put(part.default)
+    if (moved) this.tell()
+  }
+  down(p) {
+    // The corner nearest the finger is the one held.
+    const points = this.shape(this.u).points
+    let near = Infinity
+    for (let i = 1; i < 5; i++) { const far = Math.hypot(p.x - points[i][0], p.y - points[i][1]); if (far < near) { near = far; this.grip = i - 1 } }
+    this.last = { x: p.x, y: p.y }
+    this.where = this.parts.map((part) => part.pos)
+    this.touch()
+  }
+  move(p) {
+    const s = this.shape(this.u), fine = p.shift ? 0.1 : 1
+    const across = (p.x - this.last.x) / (s.w * SHAPE_PART) * fine, upward = (this.last.y - p.y) / s.h * fine
+    this.last = { x: p.x, y: p.y }
+    const go = (i, by) => { this.where[i] = clamp(this.where[i] + by, 0, 1); return this.slide(i, this.where[i]) }
+    let moved = 0
+    if (this.grip === 0) moved |= go(0, across)
+    if (this.grip === 1) moved |= go(1, across) | go(2, upward)
+    if (this.grip === 2) moved |= go(2, upward)
+    if (this.grip === 3) moved |= go(3, across)
+    if (moved) this.tell()
+  }
+  up() { this.grip = -1; this.touch() }
+  frame() {
+    if (this.held) return
+    let moved = 0
+    for (const part of this.parts) moved |= part.follow()
+    if (moved) this.touch()
+  }
+  draw(g, u) {
+    const s = this.shape(u), pts = s.points
+    words(g, this.label, this.x + this.w / 2, this.y + 13 * u, 12 * u, THEME.dim, 'center', '', this.w - 6 * u)
+    rounded(g, this.x + 4 * u, s.y - 8 * u, this.w - 8 * u, s.h + 16 * u, 7 * u)
+    g.fillStyle = THEME.well
+    g.fill()
+    const trace = () => { g.beginPath(); pts.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y))) }
+    trace()
+    g.closePath()
+    g.globalAlpha = 0.18
+    g.fillStyle = this.accent
+    g.fill()
+    g.globalAlpha = 1
+    trace()
+    g.lineJoin = 'round'
+    g.lineCap = 'round'
+    g.strokeStyle = this.accent
+    g.lineWidth = 2 * u
+    g.stroke()
+    for (let i = 1; i < 5; i++) {
+      const on = this.grip === i - 1
+      g.beginPath(); g.arc(pts[i][0], pts[i][1], (on ? 7.5 : i === 3 ? 4 : 6) * u, 0, TAU)
+      g.fillStyle = on ? this.accent : THEME.text
+      g.fill()
+    }
+    // Under the graph: the four numbers, or while a corner is held, what it is setting, in full.
+    const held = this.grip < 0 ? [] : this.grip === 1 ? [1, 2] : [this.grip === 2 ? 2 : this.grip]
+    const said = held.length ? held.map((i) => `${SHAPE[i]} ${shown(this.parts[i].v, this.parts[i])}`).join('   ') : this.parts.map((part, i) => `${SHAPE[i][0].toUpperCase()} ${shown(part.v, { ...part, unit: '' })}`).join('   ')
+    words(g, said, this.x + this.w / 2, this.y + this.h - 10 * u, 11 * u, held.length ? THEME.text : THEME.dim, 'center', '', this.w - 12 * u)
+  }
+}
+
+/** A step of a grid is never drawn narrower than this, in points: a row too long for its room is put on two lines, or four. */
+const STEP_LEAST = 24
+
+/**
+ * A GRID OF STEPS: a row for each sound and a column for each step of a bar, every cell on or off.
+ * `grid.value` is the rows, each a list of 0 and 1 (or of how hard, 0 to 1, with `velocity: true`);
+ * `grid.get(row, step)` reads one cell and `grid.put(row, step, on)` writes one, a row being named or
+ * numbered. `grid.step = 3` lights that column as the one playing. A tap turns a cell on or off, and
+ * a finger dragged along turns on (or off) every cell it crosses.
+ */
+class StepGrid extends Control {
+  constructor(panel, kind, spec) {
+    super(panel, kind, spec)
+    this.steps = Math.max(1, Math.round(spec.steps || 16))
+    this.rows = (Array.isArray(spec.rows) ? spec.rows : Array.from({ length: spec.rows || 1 }, (_, i) => String(i + 1))).map(String)
+    this.velocity = !!spec.velocity
+    this.cells = this.rows.map((_, r) => Array.from({ length: this.steps }, (_, s) => Number(spec.value?.[r]?.[s]) || 0))
+    this.playing = -1
+    this.per = this.steps // how many steps to a line
+    this.many = false
+  }
+  get value() { return this.cells.map((row) => [...row]) }
+  set value(rows) { this.cells.forEach((row, r) => row.forEach((_, s) => { row[s] = Number(rows?.[r]?.[s]) || 0 })); this.touch() }
+  /** The column that is playing now (none: -1). */
+  get step() { return this.playing }
+  set step(n) { n = n == null || n < 0 ? -1 : Math.floor(n) % this.steps; if (n !== this.playing) { this.playing = n; this.touch() } }
+  rowOf(row) { return typeof row === 'number' ? row : this.rows.indexOf(String(row)) }
+  /** One cell: 0 for off, else how hard (1 unless it was told otherwise). */
+  get(row, step) { return this.cells[this.rowOf(row)]?.[step] || 0 }
+  /** A whole row, by its name or its number. */
+  row(row) { return [...(this.cells[this.rowOf(row)] || [])] }
+  put(row, step, on) {
+    const r = this.rowOf(row), level = on === true ? 1 : clamp(Number(on) || 0, 0, 1)
+    if (!this.cells[r] || !(step >= 0 && step < this.steps) || this.cells[r][step] === level) return false
+    this.cells[r][step] = level
+    this.touch()
+    return true
+  }
+  clear() { for (const row of this.cells) row.fill(0); this.touch() }
+  /** A cell changed by hand. */
+  take(r, s, level) {
+    if (!this.put(r, s, level)) return
+    if (this.onChange) this.onChange(this.rows[r], s, level, this)
+    this.panel.told.push(this.id, [r, s, level])
+  }
+  scaleOf() { return 1 }
+  natural(u, room, g) {
+    g.font = `${11 * u}px ${THEME.font}`
+    this.names = 0
+    for (const name of this.rows) this.names = Math.max(this.names, g.measureText(name).width)
+    this.names = Math.min(this.names, 64 * u) + 10 * u
+    const side = (per) => (room - this.names - 14 * u) / per
+    this.per = this.steps
+    while (side(this.per) < STEP_LEAST * u && this.per > 4) this.per = Math.ceil(this.per / 2)
+    const cell = clamp(side(this.per), STEP_LEAST * u, 32 * u), lines = Math.ceil(this.steps / this.per)
+    this.sizes = [cell, Math.max(cell, 26 * u)]
+    return [this.names + this.per * cell + 14 * u, (this.label ? 22 : 6) * u + lines * (this.rows.length * this.sizes[1] + 8 * u)]
+  }
+  /** Where a cell is drawn. */
+  spotOf(r, s, u) {
+    const [cw, ch] = this.sizes, line = Math.floor(s / this.per), across = (this.w - this.names - 14 * u) / this.per
+    return { x: this.x + 7 * u + this.names + (s % this.per) * across, y: this.y + (this.label ? 22 : 6) * u + line * (this.rows.length * ch + 8 * u) + r * ch, w: across, h: ch, cw }
+  }
+  cellAt(p, u) {
+    const first = this.spotOf(0, 0, u), block = this.rows.length * first.h + 8 * u
+    const line = Math.floor((p.y - first.y) / block), r = Math.floor((p.y - first.y - line * block) / first.h), col = Math.floor((p.x - first.x) / first.w)
+    const s = line * this.per + col
+    return line >= 0 && r >= 0 && r < this.rows.length && col >= 0 && col < this.per && s < this.steps ? [r, s] : null
+  }
+  down(p) {
+    const at = this.cellAt(p, this.u)
+    this.paint = null
+    if (!at) return
+    // The first cell is turned over, and the drag then turns every cell it crosses the same way.
+    this.paint = this.cells[at[0]][at[1]] ? 0 : 1
+    this.first = at
+    this.from = { x: p.x, y: p.y }
+    this.take(at[0], at[1], this.paint)
+  }
+  move(p) {
+    if (this.paint == null) return
+    const at = this.cellAt(p, this.u)
+    if (this.velocity && this.paint && at && at[0] === this.first[0] && at[1] === this.first[1]) {
+      // How hard: up from where the finger landed is harder, down is softer.
+      const travel = (this.from.y - p.y) / (60 * this.u)
+      if (Math.abs(travel) > 0.08) this.take(at[0], at[1], clamp(Math.round((1 + (travel > 0 ? 0 : travel)) * 20) / 20, 0.1, 1))
+      return
+    }
+    if (at) this.take(at[0], at[1], this.paint)
+  }
+  draw(g, u) {
+    if (this.label) words(g, this.label, this.x + 8 * u, this.y + 12 * u, 12 * u, THEME.dim, 'left', '', this.w - 16 * u)
+    const lines = Math.ceil(this.steps / this.per)
+    for (let r = 0; r < this.rows.length; r++) {
+      for (let line = 0; line < lines; line++) {
+        const c = this.spotOf(r, line * this.per, u)
+        words(g, this.rows[r], this.x + 7 * u + this.names - 8 * u, c.y + c.h / 2, 11 * u, THEME.dim, 'right', '', this.names - 8 * u)
+      }
+      for (let s = 0; s < this.steps; s++) {
+        const c = this.spotOf(r, s, u), level = this.cells[r][s], now = s === this.playing, gap = 2 * u
+        rounded(g, c.x + gap, c.y + gap, c.w - 2 * gap, c.h - 2 * gap, 5 * u)
+        // Every fourth step starts a beat, and is drawn a little lighter so that the eye can count.
+        g.fillStyle = now ? THEME.track : s % 4 === 0 ? THEME.knob : THEME.well
+        g.fill()
+        if (level) { g.globalAlpha = 0.35 + 0.65 * level; g.fillStyle = this.accent; g.fill(); g.globalAlpha = 1 }
+        if (now) { g.strokeStyle = THEME.text; g.lineWidth = 1.5 * u; g.stroke() }
+      }
+    }
+  }
+}
+
+/** The notes of a drum kit that pads play when they are named for its drums, as most instruments number them. */
+const DRUMS = { kick: 36, rim: 37, snare: 38, clap: 39, tom: 45, hat: 42, 'closed hat': 42, 'open hat': 46, crash: 49, ride: 51, cowbell: 56 }
+/** How long a pad stays lit after it is flashed from the scene's code, in milliseconds. */
+const PAD_FLASH_MS = 140
+
+/**
+ * PADS: big squares to hit, several at once. Each plays a note of its target for as long as it is
+ * held (`noteOn(note, velocity)`, then `noteOff(note)`), harder the nearer its middle it is hit.
+ * Pads named for drums play those drums' notes (a kick is 36); others count up from 36, or are told
+ * with `notes`. `onNoteOn(note, velocity, name)` hears them, and `drums.flash("kick")` lights one
+ * from the scene's code, as when a song plays it.
+ */
+class Pads extends Control {
+  constructor(panel, kind, spec) {
+    super(panel, kind, spec)
+    this.target = spec.target || null
+    this.names = (Array.isArray(spec.pads) ? spec.pads : Array.from({ length: spec.pads || 4 }, (_, i) => String(i + 1))).map(String)
+    this.notes = this.names.map((name, i) => spec.notes?.[i] ?? DRUMS[name.toLowerCase()] ?? 36 + i)
+    this.columns = spec.columns || (this.names.length <= 3 ? this.names.length : this.names.length <= 8 ? Math.ceil(this.names.length / 2) : 4)
+    this.onNoteOn = spec.onNoteOn || null
+    this.onNoteOff = spec.onNoteOff || null
+    this.fingers = new Map() // pointer id -> the pad under it
+    this.lit = this.names.map(() => 0) // when each was last flashed
+    this.many = true
+  }
+  /** The pads held now, by their place in the list. */
+  get value() { return [...new Set(this.fingers.values())].sort((a, b) => a - b) }
+  scaleOf() { return 1 }
+  get side() { return sized(this.size, 56, 72, 96) }
+  natural(u, room) {
+    const side = Math.max(48 * u, Math.min(this.side * u, (room - 12 * u) / this.columns))
+    return [this.columns * side + 12 * u, (this.label ? 22 : 6) * u + Math.ceil(this.names.length / this.columns) * side + 6 * u]
+  }
+  stretch() { return [1, 1.25] }
+  spot(i, u) {
+    const top = this.y + (this.label ? 22 : 6) * u, lines = Math.ceil(this.names.length / this.columns)
+    const w = (this.w - 12 * u) / this.columns, h = (this.y + this.h - 6 * u - top) / lines
+    return { x: this.x + 6 * u + (i % this.columns) * w, y: top + Math.floor(i / this.columns) * h, w, h }
+  }
+  padAt(p, u) {
+    const first = this.spot(0, u), col = Math.floor((p.x - first.x) / first.w), line = Math.floor((p.y - first.y) / first.h), i = line * this.columns + col
+    return col >= 0 && col < this.columns && line >= 0 && i < this.names.length ? i : -1
+  }
+  /** Hit a pad from the scene's code as a finger would, by its name or its place; `lift` lets it go again. */
+  hit(pad, velocity = 0.8) {
+    const i = typeof pad === 'number' ? pad : this.names.indexOf(String(pad))
+    if (i < 0 || i >= this.names.length) return
+    const play = method(this.target, 'noteOn', 'note_on')
+    if (play) play(this.notes[i], velocity)
+    if (this.onNoteOn) this.onNoteOn(this.notes[i], velocity, this.names[i], this)
+    this.panel.played.push(this.id, this.notes[i], velocity)
+    this.touch()
+  }
+  lift(pad) {
+    const i = typeof pad === 'number' ? pad : this.names.indexOf(String(pad))
+    if (i < 0 || i >= this.names.length) return
+    const stop = method(this.target, 'noteOff', 'note_off')
+    if (stop) stop(this.notes[i])
+    if (this.onNoteOff) this.onNoteOff(this.notes[i], this.names[i], this)
+    this.panel.played.push(this.id, this.notes[i], 0)
+    this.touch()
+  }
+  /** Light a pad for a moment without playing it: a song that plays the drum itself shows it so. */
+  flash(pad) {
+    const i = typeof pad === 'number' ? pad : this.names.indexOf(String(pad))
+    if (i >= 0 && i < this.names.length) { this.lit[i] = performance.now(); this.touch() }
+  }
+  down(p) {
+    const i = this.padAt(p, this.u)
+    if (i < 0) return
+    this.fingers.set(p.id, i)
+    // Harder the nearer the middle of the pad.
+    const s = this.spot(i, this.u), far = Math.hypot((p.x - s.x - s.w / 2) / (s.w / 2), (p.y - s.y - s.h / 2) / (s.h / 2))
+    this.hit(i, Math.round(clamp(1 - 0.6 * far, 0.35, 1) * 100) / 100)
+  }
+  up(p) {
+    const i = this.fingers.get(p.id)
+    this.fingers.delete(p.id)
+    if (i != null && ![...this.fingers.values()].includes(i)) this.lift(i)
+  }
+  frame(now) { if (this.lit.some((at) => at && performance.now() - at < PAD_FLASH_MS + 40)) this.touch() }
+  draw(g, u) {
+    if (this.label) words(g, this.label, this.x + 8 * u, this.y + 12 * u, 12 * u, THEME.dim, 'left', '', this.w - 16 * u)
+    const held = new Set(this.fingers.values()), now = performance.now()
+    this.names.forEach((name, i) => {
+      const s = this.spot(i, u), on = held.has(i), flashed = this.lit[i] && now - this.lit[i] < PAD_FLASH_MS
+      rounded(g, s.x + 3 * u, s.y + 3 * u, s.w - 6 * u, s.h - 6 * u, 10 * u)
+      g.fillStyle = on ? this.accent : THEME.knob
+      g.fill()
+      if (flashed && !on) { g.globalAlpha = 0.55; g.fillStyle = this.accent; g.fill(); g.globalAlpha = 1 }
+      g.strokeStyle = on ? THEME.text : this.accent
+      g.globalAlpha = on ? 1 : 0.7
+      g.lineWidth = 1.75 * u
+      g.stroke()
+      g.globalAlpha = 1
+      words(g, name, s.x + s.w / 2, s.y + s.h / 2, 13 * u, on ? THEME.well : THEME.text, 'center', '600', s.w - 14 * u)
+    })
+  }
+}
+
+/**
+ * A WHEEL, as at the left of a synth's keys: an upright slider drawn as the edge of a wheel that is
+ * rolled. `spring: true` (a pitch wheel) lets it roll back to where it started when it is let go; a
+ * mod wheel stays where it is put. It is a slider in every other way.
+ */
+class Wheel extends Slider {
+  constructor(panel, kind, spec) {
+    super(panel, kind, spec)
+    this.vertical = true
+    this.spring = !!spec.spring
+  }
+  natural(u) { return [54 * u, (sized(this.size, 90, 124, 170) + 56) * u] }
+  up() { if (this.spring) this.reset(); super.up() }
+  draw(g, u) {
+    const t = this.track(u), pos = this.toPos(this.v), cx = this.x + this.w / 2, w = 30 * u, top = t.from - t.long - 8 * u, h = t.long + 16 * u
+    words(g, this.label, cx, this.y + 12 * u, 12 * u, THEME.dim, 'center', '', this.w - 4 * u)
+    rounded(g, cx - w / 2, top, w, h, 8 * u)
+    g.fillStyle = THEME.well
+    g.fill()
+    g.save()
+    rounded(g, cx - w / 2 + 2 * u, top + 2 * u, w - 4 * u, h - 4 * u, 6 * u)
+    g.clip()
+    g.fillStyle = THEME.knob
+    g.fillRect(cx - w / 2, top, w, h)
+    // The ridges of the wheel's edge: they roll with it, and crowd together towards the top and the bottom as on a real one.
+    g.strokeStyle = THEME.track
+    g.lineWidth = 1.5 * u
+    g.beginPath()
+    for (let i = -8; i <= 8; i++) {
+      const a = (i / 8 + (pos - 0.5) * 1.2) * (Math.PI / 2)
+      if (Math.abs(a) >= Math.PI / 2) continue
+      const y = top + h / 2 - Math.sin(a) * h / 2
+      g.moveTo(cx - w / 2, y); g.lineTo(cx + w / 2, y)
+    }
+    g.stroke()
+    // The mark that says where it is.
+    const y = t.from - t.long * pos
+    g.fillStyle = this.held ? THEME.text : this.accent
+    g.fillRect(cx - w / 2, y - 3 * u, w, 6 * u)
+    const shade = g.createLinearGradient(0, top, 0, top + h)
+    shade.addColorStop(0, 'rgba(0, 0, 0, 0.55)'); shade.addColorStop(0.3, 'rgba(0, 0, 0, 0)'); shade.addColorStop(0.7, 'rgba(0, 0, 0, 0)'); shade.addColorStop(1, 'rgba(0, 0, 0, 0.55)')
+    g.fillStyle = shade
+    g.fillRect(cx - w / 2, top, w, h)
+    g.restore()
+    words(g, shown(this.v, this), cx, this.y + this.h - 11 * u, 12 * u, THEME.text, 'center', '', this.w - 4 * u)
+  }
+}
+
+Object.assign(KINDS, { joystick: Joystick, dpad: Dpad, actionButton: ActionButton, envelope: Envelope, stepGrid: StepGrid, pads: Pads, wheel: Wheel })
 Object.assign(KINDS, { number: NumberBox, textBox: TextBox, readout: Readout, checkbox: Checkbox, choose: Choose, radio: Radio, dropdown: Dropdown,
   xyPad: XYPad, colourPicker: ColourPicker, progress: Progress, light: Light, busy: Busy, rangeSlider: RangeSlider, fader: Fader })
 for (const kind of ['readout', 'progress', 'light', 'busy']) SLIDES.add(kind)
@@ -4356,6 +4736,36 @@ function spanned(args) {
   return spec
 }
 
+/** An envelope: (label, target, options), (label, target, "attack", "decay", "sustain", "release", options) or (label, options). The label may be left out. */
+function shaped(args) {
+  if (typeof args[0] !== 'string') args = [undefined, ...args]
+  const [label, target, ...rest] = args
+  const names = rest.filter((arg) => typeof arg === 'string'), options = rest.find(isPlain)
+  // One object and nothing after it is the target if it can be asked or has all four numbers; otherwise it is the options: envelope("shape", { attack: 0.1 }).
+  const aimed = target != null && (!isPlain(target) || rest.length > 0 || !!method(target, 'set', 'get', 'describe') || SHAPE.every((part) => typeof target[part] === 'number'))
+  const spec = aimed ? { ...options, target } : { ...target }
+  if (names.length === 4) spec.params = names
+  if (label !== undefined) spec.label = label
+  return spec
+}
+/** A grid of steps: (label, steps, rows, options), the label left out or not; rows is a list of names, or how many. */
+function stepped(args) {
+  if (typeof args[0] !== 'string') args = [undefined, ...args]
+  const [label, steps, rows, options] = args
+  const spec = isPlain(steps) ? { ...steps } : isPlain(rows) ? { ...rows, steps } : { ...options, steps, rows }
+  if (label !== undefined) spec.label = label
+  return spec
+}
+/** Pads: (label, names, target, options), the label, the target or both left out; names is a list, or how many. */
+function padsOf(args) {
+  if (typeof args[0] !== 'string') args = [undefined, ...args]
+  const [label, pads, a, b] = args
+  const spec = method(a, 'noteOn', 'note_on') ? { ...b, target: a } : { ...a }
+  spec.pads = pads
+  if (label !== undefined) spec.label = label
+  return spec
+}
+
 /** The functions a scene calls for the controls of this part. */
 function more(panel) {
   // A control whose numbers are called x and y gives the scene what stands for it (see standIn).
@@ -4397,6 +4807,16 @@ function more(panel) {
     dpad: make('dpad', ([a, b]) => (typeof a === 'string' ? { ...b, label: a } : { ...a })),
     /** A round button: fire = actionButton("A"), then fire.pressed. actionButton("A", { key: "space" }) holds that key down for the scene. */
     actionButton: make('actionButton', ([label, a, b]) => (typeof a === 'function' ? { ...b, label, onPress: a } : { ...a, label })),
+    /** The shape of a note as a graph with corners to drag: envelope("shape", lead) finds lead's attack, decay, sustain and release. */
+    envelope: make('envelope', shaped),
+    /** A grid of steps, on or off: grid = stepGrid("drums", 16, ["kick", "snare", "hat"]), then grid.get("kick", 0) and grid.step = 3. */
+    stepGrid: make('stepGrid', stepped),
+    /** Pads to hit, several at once, which play a target's notes: pads("kit", ["kick", "snare", "hat", "clap"], drums). */
+    pads: make('pads', padsOf),
+    /** A wheel that is rolled: wheel("mod", lead, "mod"). pitchWheel rolls back when it is let go (from -1 to 1 unless told otherwise); modWheel stays. */
+    wheel: make('wheel', ranged),
+    modWheel: make('wheel', ranged),
+    pitchWheel: make('wheel', (args) => { const spec = ranged(args); return { spring: true, ...(spec.target || spec.min != null ? null : { min: -1, max: 1, value: 0 }), ...spec } }),
   }
 }
 
@@ -4620,7 +5040,13 @@ const fader = (...args) => dials().fader(...args)
 const joystick = (...args) => dials().joystick(...args)
 const dpad = (...args) => dials().dpad(...args)
 const actionButton = (...args) => dials().actionButton(...args)
+const envelope = (...args) => dials().envelope(...args)
+const stepGrid = (...args) => dials().stepGrid(...args)
+const pads = (...args) => dials().pads(...args)
+const wheel = (...args) => dials().wheel(...args)
+const modWheel = (...args) => dials().modWheel(...args)
+const pitchWheel = (...args) => dials().pitchWheel(...args)
 
 export { dials, dial, slider, button, toggle, select, rotary, keyboard, scope, meter, label, group, row, column, grid, page, spacer, wrap, layout, room, over, theme, version,
   number, stepper, textBox, readout, checkbox, choose, radio, dropdown, xyPad, colourPicker, colorPicker, progress, light, busy, rangeSlider, fader,
-  joystick, dpad, actionButton }
+  joystick, dpad, actionButton, envelope, stepGrid, pads, wheel, modWheel, pitchWheel }

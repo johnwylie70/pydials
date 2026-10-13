@@ -1097,7 +1097,8 @@ def theme(**colours):
 # the README: for any program, for games, for music.
 
 __all__ += ["number", "stepper", "text_box", "readout", "checkbox", "choose", "radio", "dropdown", "xy_pad", "colour_picker",
-            "color_picker", "progress", "light", "busy", "range_slider", "fader", "joystick", "dpad", "action_button"]
+            "color_picker", "progress", "light", "busy", "range_slider", "fader", "joystick", "dpad", "action_button",
+            "envelope", "step_grid", "pads", "wheel", "mod_wheel", "pitch_wheel"]
 
 
 class Number(_Ranged):
@@ -1681,3 +1682,273 @@ def action_button(label="", on_press=None, *, key=None, on_release=None, size=No
     its own control, so a thumb can steer while another fires."""
     return ActionButton(_options(label=label, on_press=on_press, on_release=on_release, key=key, size=size, x=x, y=y,
                                  share=share, span=span, colour=colour, color=color))
+
+
+# ---------------------------------------------------------------- for music
+
+_SHAPE = ("attack", "decay", "sustain", "release")
+
+
+class Envelope(_Bound):
+    """The shape of a note as a graph with corners to drag. `attack`, `decay`, `sustain` and `release` are the numbers."""
+    kind = "envelope"
+
+    def __init__(self, label, target, names, spec):
+        if label is not None and not isinstance(label, str):
+            label, target = None, label
+        spec["label"] = label
+        self._params = tuple(names) if len(names) == 4 else None
+        self._tie(spec, target, _SHAPE[0] if target is not None else None)
+        self._v = [0.05, 0.3, 0.7, 0.5]
+        if target is not None:
+            spec["label"] = label          # (the first setting's name is no heading for all four)
+            if "target" in spec:
+                del spec["param"]
+                if self._params:
+                    spec["params"] = list(self._params)
+            else:
+                # A Python object: its four numbers are read here, with the ranges it gives, and the page is told each.
+                self._params = self._params or _SHAPE
+                self._v = []
+                for part, name in zip(_SHAPE, self._params):
+                    d = _describe(target, name)
+                    now = _read(target, name)
+                    way = {"min": d.get("min", 0), "max": d.get("max", 1 if part == "sustain" else 2), "value": now if _is_number(now) else 0}
+                    if d.get("unit"):
+                        way["unit"] = d["unit"]
+                    spec[part] = way
+                    self._v.append(way["value"])
+        else:
+            for i, part in enumerate(_SHAPE):
+                if _is_number(spec.get(part)):
+                    self._v[i] = spec[part]
+        Control.__init__(self, spec)
+
+    @property
+    def value(self):
+        return list(self._v)
+
+    @value.setter
+    def value(self, four):
+        four = [_value_of(v) for v in four]
+        if four == self._v:
+            return
+        self._v = four
+        self._set("value", four)
+        self._all(four)
+
+    def _all(self, four):
+        names = self._params or _SHAPE
+        if self._target is not None:
+            for name, value in zip(names, four):
+                _write(self._target, name, value)
+        elif self._owner is not None and callable(getattr(self._owner, "_told", None)):
+            for name, value in zip(names, four):
+                self._owner._told(name, value)
+
+    def _made(self, low, high, default, choices, value):
+        if isinstance(value, (list, tuple)):
+            self._v = list(value)
+
+    def _told(self, four):
+        self._v = list(four)
+        self._all(self._v)
+        if self.on_change:
+            self.on_change(*self._v)
+
+    def _frame(self):
+        if self._target is None:
+            return
+        there = [_read(self._target, name) for name in self._params]
+        if all(_is_number(v) for v in there) and there != self._v:
+            self._v = there
+            self._set("value", there)
+
+    def __iter__(self):
+        return iter(self._v)
+
+
+for _i, _part in enumerate(_SHAPE):
+    setattr(Envelope, _part, property(lambda self, _i=_i: self._v[_i],
+                                      lambda self, v, _i=_i: setattr(self, "value", self._v[:_i] + [v] + self._v[_i + 1:])))
+
+
+class StepGrid(Control):
+    """A grid of steps: a row for each sound, a column for each step, every cell 0 (off) or how hard (1 unless told)."""
+    kind = "stepGrid"
+
+    def __init__(self, spec):
+        rows = spec.get("rows") or 1
+        self.rows = [str(r) for r in rows] if isinstance(rows, (list, tuple)) else [str(i + 1) for i in range(rows)]
+        self.steps = int(spec.get("steps") or 16)
+        spec["rows"], spec["steps"] = self.rows, self.steps
+        given = spec.get("value") or []
+        self._cells = [[(given[r][s] if r < len(given) and s < len(given[r]) else 0) for s in range(self.steps)] for r in range(len(self.rows))]
+        self._step = -1
+        Control.__init__(self, spec)
+
+    def _row(self, row):
+        return row if isinstance(row, int) else self.rows.index(str(row))
+
+    @property
+    def value(self):
+        return [list(row) for row in self._cells]
+
+    def get(self, row, step):
+        """One cell: 0 for off, else how hard. A row is named or numbered."""
+        return self._cells[self._row(row)][step]
+
+    def row(self, row):
+        """A whole row, by its name or its number."""
+        return list(self._cells[self._row(row)])
+
+    def put(self, row, step, on=True):
+        """Turn one cell on or off (or say how hard, from 0 to 1)."""
+        r, level = self._row(row), (1 if on is True else max(0, min(1, _value_of(on) or 0)))
+        if 0 <= step < self.steps and self._cells[r][step] != level:
+            self._cells[r][step] = level
+            self._call("put", r, step, level)
+
+    def clear(self):
+        for row in self._cells:
+            row[:] = [0] * self.steps
+        self._call("clear")
+
+    @property
+    def step(self):
+        """The column that is lit as the one playing (none: -1)."""
+        return self._step
+
+    @step.setter
+    def step(self, n):
+        n = -1 if n is None or n < 0 else int(n) % self.steps
+        if n != self._step:
+            self._step = n
+            self._set("step", n)
+
+    def _told(self, cell):
+        r, s, level = cell
+        self._cells[int(r)][int(s)] = level
+        if self.on_change:
+            self.on_change(self.rows[int(r)], int(s), level)
+
+
+class Pads(Control):
+    """Pads to hit, several at once. `held` is the names of those down now."""
+    kind = "pads"
+
+    def __init__(self, target, spec):
+        self.on_note_on = spec.pop("on_note_on", None)
+        self.on_note_off = spec.pop("on_note_off", None)
+        names = spec.get("pads") or 4
+        self.names = [str(n) for n in names] if isinstance(names, (list, tuple)) else [str(i + 1) for i in range(names)]
+        spec["pads"] = self.names
+        drums = {"kick": 36, "rim": 37, "snare": 38, "clap": 39, "tom": 45, "hat": 42, "closed hat": 42, "open hat": 46, "crash": 49, "ride": 51, "cowbell": 56}
+        given = spec.get("notes") or []
+        self.notes = [given[i] if i < len(given) else drums.get(name.lower(), 36 + i) for i, name in enumerate(self.names)]
+        spec["notes"] = self.notes
+        self._down = set()
+        page = _in_page(target)
+        self._target = None if page is not None else target
+        if page is not None:
+            spec["target"] = page
+        Control.__init__(self, spec)
+
+    @property
+    def held(self):
+        return [name for name, note in zip(self.names, self.notes) if note in self._down]
+
+    value = held
+
+    def hit(self, pad, velocity=0.8):
+        """Hit a pad as a finger would, by its name or its place; lift() lets it go again."""
+        self._call("hit", pad, velocity)
+
+    def lift(self, pad):
+        self._call("lift", pad)
+
+    def flash(self, pad):
+        """Light a pad for a moment without playing it."""
+        self._call("flash", pad)
+
+    def _played(self, note, velocity):
+        name = self.names[self.notes.index(note)] if note in self.notes else None
+        if velocity:
+            self._down.add(note)
+            play = _method(self._target, "note_on", "noteOn")
+            if play:
+                play(note, velocity)
+            if self.on_note_on:
+                self.on_note_on(note, velocity, name)
+        else:
+            self._down.discard(note)
+            stop = _method(self._target, "note_off", "noteOff")
+            if stop:
+                stop(note)
+            if self.on_note_off:
+                self.on_note_off(note, name)
+
+
+class Wheel(_Ranged):
+    kind = "wheel"
+
+
+def envelope(label=None, target=None, *names, attack=None, decay=None, sustain=None, release=None, width=None, height=None,
+             x=None, y=None, share=None, span=None, colour=None, color=None, on_change=None):
+    """How a note begins, settles, holds and dies away, as a graph whose corners are dragged.
+
+    envelope("shape", lead) finds lead's attack, decay, sustain and release by those names;
+    envelope("shape", lead, "a", "d", "s", "r") is told the four names; with no target, `shape.attack`,
+    `shape.decay`, `shape.sustain` and `shape.release` are numbers to use, starting where attack= and the rest say.
+    on_change(attack, decay, sustain, release) hears a hand."""
+    return Envelope(label, target, names, _options(attack=attack, decay=decay, sustain=sustain, release=release, width=width,
+                                                   height=height, x=x, y=y, share=share, span=span, colour=colour,
+                                                   color=color, on_change=on_change))
+
+
+def step_grid(label=None, steps=None, rows=None, *, value=None, velocity=None, x=None, y=None, share=None, span=None,
+              colour=None, color=None, on_change=None):
+    """A grid of steps, each on or off: `grid = step_grid("drums", 16, ["kick", "snare", "hat"])`.
+
+    `grid.value` is the rows, each a list of 0 and 1; `grid.get("kick", 0)` reads a cell and `grid.put("kick", 0)`
+    writes one; `grid.step = 3` lights that column as the one playing. A tap turns a cell over, and a finger
+    dragged along turns on (or off) every cell it crosses. velocity=True: a drag up or down on a cell says how
+    hard. on_change(row, step, on)."""
+    if label is not None and not isinstance(label, str):
+        label, steps, rows = None, label, steps
+    return StepGrid(_options(label=label, steps=steps, rows=rows, value=value, velocity=velocity, x=x, y=y, share=share,
+                             span=span, colour=colour, color=color, on_change=on_change))
+
+
+def pads(label=None, names=None, target=None, *, notes=None, columns=None, size=None, x=None, y=None, share=None, span=None,
+         colour=None, color=None, on_note_on=None, on_note_off=None):
+    """Pads to hit, several at once: pads("kit", ["kick", "snare", "hat", "clap"], drums) plays `drums`.
+
+    Each plays a note for as long as it is held, harder the nearer its middle it is hit. Pads named for drums
+    play those drums' notes (a kick is 36); others count up from 36, or are told with notes=.
+    on_note_on(note, velocity, name) hears them, and `kit.flash("kick")` lights one from your code."""
+    if label is not None and not isinstance(label, str):
+        label, names, target = None, label, names
+    return Pads(target, _options(label=label, pads=names, notes=notes, columns=columns, size=size, x=x, y=y, share=share,
+                                 span=span, colour=colour, color=color, on_note_on=on_note_on, on_note_off=on_note_off))
+
+
+def wheel(label=None, a=None, b=None, c=None, *, spring=None, min=None, max=None, value=None, step=None, unit=None,
+          digits=None, default=None, x=None, y=None, size=None, share=None, span=None, colour=None, color=None,
+          on_change=None):
+    """A wheel that is rolled, as at the left of a synth's keys: wheel("mod", lead, "mod"). spring=True lets it roll
+    back to where it started when it is let go."""
+    return Wheel(label, a, b, c, _options(spring=spring, min=min, max=max, value=value, step=step, unit=unit, digits=digits,
+                                          default=default, x=x, y=y, size=size, share=share, span=span, colour=colour,
+                                          color=color, on_change=on_change))
+
+
+mod_wheel = wheel
+
+
+def pitch_wheel(label=None, a=None, b=None, c=None, **options):
+    """A wheel that rolls back to the middle when it is let go: pitch_wheel("bend", lead, "bend"), or
+    `bend = pitch_wheel("bend")`, which runs from -1 to 1."""
+    if a is None and options.get("min") is None:
+        a, b, c = -1, 1, 0
+    return wheel(label, a, b, c, spring=True, **options)

@@ -36,3 +36,4 @@
 - `xy_pad("filter", lead, "cutoff", "resonance")` (`pad.x`, `pad.y`), `colour_picker("ink", "tomato")`, `progress("loading")`, `light("ready", True)`, `busy("working")`, `range_slider("price", 0, 100, [20, 80])` (`price.low`, `price.high`) and `fader(…)`.
 - For games: `joystick()` (`stick.x`, `stick.y`, `stick.angle`, `stick.distance`), `dpad()` (`pad.left`, `pad.right`, `pad.up`, `pad.down`, `pad.x`, `pad.y`) and `action_button("A")`. `dpad(as_keys=True)` and `action_button("jump", key="space")` hold keys down for the scene, so a game written for `"ArrowLeft" in keys` is played by touch unchanged.
 - Two examples: `settings_panel.py` and `joystick_game.py`.
+- For music: `envelope("shape", lead)` (`shape.attack` and the rest), `step_grid("drums", 16, ["kick", "snare", "hat"])` (`grid.get`, `grid.put`, `grid.value`, `grid.step`), `pads("kit", ["kick", "snare"], drums)` (`kit.held`, `kit.flash`), `pitch_wheel` and `mod_wheel`. `examples/drum_machine.py`.
