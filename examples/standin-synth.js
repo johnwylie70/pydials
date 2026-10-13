@@ -1,5 +1,5 @@
 // A stand-in synth, so the examples make sound today: the browser's own oscillators through one
-// filter. It is here only until synths.js is ready, and it is a TARGET in the sense controls.js
+// filter. It is here only until synths.js is ready, and it is a TARGET in the sense dials.js
 // means: set, get, describe, noteOn, noteOff, notes, samples and level. Anything with those
 // (or some of them) can be put behind a dial, a keyboard, a scope and a meter.
 

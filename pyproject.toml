@@ -3,8 +3,7 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-# The name is not settled ("controls" is taken on PyPI): it is here, in the package folder and in the imports.
-name = "controls"
+name = "pydials"
 version = "0.0.0"
 description = "Dials, sliders, buttons, a piano keyboard, a scope and meters to put on a Pyctures scene. They lay themselves out, work by touch, mouse and keyboard, and can be tied to a synth's settings."
 readme = "README.md"
@@ -12,7 +11,7 @@ requires-python = ">=3.9"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "John Wylie" }]
-keywords = ["controls", "dial", "knob", "slider", "piano", "keyboard", "oscilloscope", "meter", "synth", "games", "education", "pyodide"]
+keywords = ["dials", "controls", "dial", "knob", "slider", "piano", "keyboard", "oscilloscope", "meter", "synth", "games", "education", "pyodide"]
 classifiers = [
     "Development Status :: 1 - Planning",
     "Intended Audience :: Education",
@@ -37,7 +36,7 @@ package-dir = { "" = "src" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-controls = ["web/*.js"]
+pydials = ["web/*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

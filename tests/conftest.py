@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parent.parent
 EXAMPLES = ROOT / "examples"
 SHOTS = ROOT / "tests" / "screenshots"
 # The JavaScript library, where the page's half is written, when it is beside this repository.
-JS_REPO = ROOT.parent / "controls.js"
+JS_REPO = ROOT.parent / "dials.js"
 
 # Pyctures as installed, or else its repository beside this one.
 try:

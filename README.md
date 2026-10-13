@@ -1,19 +1,19 @@
-# controls
+# pydials
 
 [![MIT licence](https://img.shields.io/badge/licence-MIT-green)](LICENSE)
 
-controls puts dials, sliders, buttons, a piano keyboard, a scope and level meters on a [Pyctures](https://github.com/johnwylie70/pyctures) scene, in Python. You say what you want and it appears: nothing to position, nothing to draw, nothing to wire up. It works with a finger (several at once on the keyboard), with the mouse and with the computer's keys. It is designed for projects made in [Circuitry Studio](https://www.circuitry.dev).
+pydials puts dials, sliders, buttons, a piano keyboard, a scope and level meters on a [Pyctures](https://github.com/johnwylie70/pyctures) scene, in Python. You say what you want and it appears: nothing to position, nothing to draw, nothing to wire up. It works with a finger (several at once on the keyboard), with the mouse and with the computer's keys. It is designed for projects made in [Circuitry Studio](https://www.circuitry.dev).
 
-Prefer JavaScript? The same library for [pictures.js](https://github.com/johnwylie70/pictures.js) is in the `controls.js` repository.
+Prefer JavaScript? The same library for [pictures.js](https://github.com/johnwylie70/pictures.js) is in the `dials.js` repository.
 
-Nothing here is published yet, and its name is not settled.
+Nothing here is published yet.
 
 ## A synth you can play
 
 ```python
 from pyctures import *
 from synths import *
-from controls import *
+from pydials import *
 
 lead = make_synth(wave="saw")
 
@@ -35,7 +35,7 @@ A control needs no synth. It is a number for a game or an animation:
 
 ```python
 from pyctures import *
-from controls import *
+from pydials import *
 
 points = dial("points", 3, 12, 5, step=1)     # from 3 to 12, starting at 5
 
@@ -99,7 +99,7 @@ A control can be tied to anything. No library is named: a target is known by wha
 
 ## How it is made
 
-Python never touches the page: it may be in a worker or on another computer, and it sends one batch of commands a frame. So the page draws the controls and feels the fingers (it is `controls.js`, the JavaScript library itself, carried in this package as `src/controls/web/controls.js`), and a dial turns smoothly however busy Python is. Each function here sends one command that makes the control in the page, and keeps a small object that stands for it. What a hand changes comes back with the next frame.
+Python never touches the page: it may be in a worker or on another computer, and it sends one batch of commands a frame. So the page draws the controls and feels the fingers (it is `dials.js`, the JavaScript library itself, carried in this package as `src/pydials/web/dials.js`), and a dial turns smoothly however busy Python is. Each function here sends one command that makes the control in the page, and keeps a small object that stands for it. What a hand changes comes back with the next frame.
 
 A scope or meter fed from Python (`scope(my_function)`) is asked for its numbers once for each frame the page has drawn, so Python never gets ahead of the page.
 

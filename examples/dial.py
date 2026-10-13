@@ -4,7 +4,7 @@
 # Run it:   pyctures run dial.py
 
 from pyctures import *
-from controls import *
+from pydials import *
 
 points = dial("points", 3, 12, 5, step=1)
 turn = 0

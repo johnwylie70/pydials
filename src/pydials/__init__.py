@@ -1,7 +1,7 @@
-"""controls: dials, sliders, buttons, a piano keyboard, a scope and meters for a Pyctures scene.
+"""pydials: dials, sliders, buttons, a piano keyboard, a scope and meters for a Pyctures scene.
 
     from pyctures import *
-    from controls import *
+    from pydials import *
 
     speed = dial("speed", 0, 10)            # a number to read: speed.value, or speed * dt
     dial("cutoff", lead, "filter_cutoff")   # the dial IS that setting of `lead`
@@ -11,8 +11,9 @@
 THE PAGE DRAWS THE CONTROLS AND FEELS THE FINGERS. Python never touches the
 page (it may be in a worker, or on another computer), so a dial that Python
 drew and turned would lag behind the finger. Here each function sends ONE
-command that makes the control in the page, from ``web/controls.js`` (the very
-file that is the JavaScript library), and Python keeps a small object that
+command that makes the control in the page, from ``web/dials.js`` (the very
+file that is the JavaScript library; a Pyctures that has it built in says so
+with ``H_DIALS``, and then this module is one file that reads no other), and Python keeps a small object that
 stands for it. What a hand changes comes back with the next frame: the object's
 ``value`` is then up to date, and ``on_change`` is called.
 
@@ -52,7 +53,7 @@ SCOPE_POINTS = 256
 def _library():
     """The page's half as text that can be made into a function: a page is given no file to load."""
     if _source[0] is None:
-        with open(os.path.join(_HERE, "web", "controls.js"), encoding="utf-8") as f:
+        with open(os.path.join(_HERE, "web", "dials.js"), encoding="utf-8") as f:
             _source[0] = f.read().replace("export {", "return {")
     return _source[0]
 
@@ -87,12 +88,12 @@ def _page():
     # A new run has a new `js`: what was made for the last run is gone with its page.
     if _run.js is not p.js:
         _run = _Run(p.js)
-        handle = getattr(p, "H_CONTROLS", None)
+        handle = getattr(p, "H_DIALS", None) or getattr(p, "H_CONTROLS", None)
         if handle is not None:
             _run.api = p.JsRef(handle)      # a Pyctures that has the controls built in
         else:
             _run.lib = p.js.Function(_library())()
-            _run.api = _run.lib.controls(p.canvas, {"fresh": True})
+            _run.api = _run.lib.dials(p.canvas, {"fresh": True})
         _run.api.listen(_heard)
     return _run.api
 
@@ -302,6 +303,7 @@ class _Bound(Control):
     def _tie(self, spec, target, param):
         """Fill the spec from the target. Returns what the target says of the setting ({} for one in the page)."""
         self._target = None
+        self._owner = None
         self._param = param
         self._out = None
         if target is None:
@@ -310,6 +312,8 @@ class _Bound(Control):
         if page is not None:
             # Tied in the page: the page asks it for the range and tells us (`_made`).
             spec["target"], spec["param"] = page, param
+            # The Python object that stands for it is told what a hand changed, so `lead.cutoff` reads what the dial says.
+            self._owner = target if target is not page else None
             return {}
         self._target = target
         d = _describe(target, param)
@@ -321,6 +325,10 @@ class _Bound(Control):
     def _send(self, value):
         if self._target is not None:
             _write(self._target, self._param, self._out(value) if self._out else value)
+        elif self._owner is not None:
+            hear = getattr(self._owner, "_told", None)
+            if callable(hear):
+                hear(self._param, value)       # the page has already made the change: this only remembers it
 
 
 class _Ranged(_Number, _Bound):

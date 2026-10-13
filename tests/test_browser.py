@@ -14,10 +14,10 @@ playwright = pytest.importorskip("playwright.sync_api")
 SCENES = sorted(p.name for p in EXAMPLES.glob("*.py") if p.name != "standin_synth.py")
 
 # The scene's controls, as the page keeps them (the panel its canvas holds).
-PANEL = "document.querySelector('[data-pyctures-src] canvas')[Symbol.for('controls.panel')]"
+PANEL = "document.querySelector('[data-pyctures-src] canvas')[Symbol.for('dials.panel')]"
 # The middle of control number `i` (or the point fx, fy of the way across and down it), in the page.
 SPOT = """([i, fx, fy]) => {
-  const canvas = document.querySelector('[data-pyctures-src] canvas'), c = canvas[Symbol.for('controls.panel')].items[i], b = canvas.getBoundingClientRect()
+  const canvas = document.querySelector('[data-pyctures-src] canvas'), c = canvas[Symbol.for('dials.panel')].items[i], b = canvas.getBoundingClientRect()
   return [b.left + c.x + c.w * fx, b.top + c.y + c.h * fy]
 }"""
 
@@ -105,7 +105,7 @@ def test_each_example_runs_and_shows_its_controls(browser, pyctures_run, scene):
 def test_a_dial_turned_in_the_page_is_a_number_in_python(browser, pyctures_run, tmp_path):
     w = Watched(browser, pyctures_run(scene_file(tmp_path, """
 from pyctures import *
-from controls import *
+from pydials import *
 
 speed = dial("speed", 0, 100, 20)
 box = {"v": 0}
@@ -144,7 +144,7 @@ def on_key_down(key):
 def test_a_keyboard_plays_a_target_in_the_page_at_once_and_python_knows_the_notes(browser, pyctures_run, tmp_path):
     w = Watched(browser, pyctures_run(scene_file(tmp_path, """
 from pyctures import *
-from controls import *
+from pydials import *
 
 # A thing in the page that can be played and has a setting, as a synth has.
 lead = js.Function('''return { log: [], cutoff: 800,
@@ -186,7 +186,7 @@ def test_a_scope_and_a_meter_are_fed_from_python(browser, pyctures_run, tmp_path
     w = Watched(browser, pyctures_run(scene_file(tmp_path, """
 import math
 from pyctures import *
-from controls import *
+from pydials import *
 
 t = 0
 wave = scope(lambda: [math.sin(i / 8 + t) for i in range(256)])
@@ -212,7 +212,7 @@ def update(dt):
 def test_rows_places_colours_and_values_set_from_python_reach_the_page(browser, pyctures_run, tmp_path):
     w = Watched(browser, pyctures_run(scene_file(tmp_path, """
 from pyctures import *
-from controls import *
+from pydials import *
 
 layout(at="bottom")
 theme(accent="rgb(255, 0, 0)")

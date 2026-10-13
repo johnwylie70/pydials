@@ -5,7 +5,7 @@
 # Run it:   pyctures run keyboard_scope.py
 
 from pyctures import *
-from controls import *
+from pydials import *
 from standin_synth import make_synth   # a stand-in until synths is ready: then  from synths import *
 
 lead = make_synth(wave="triangle")

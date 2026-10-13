@@ -8,6 +8,9 @@ from conftest import JS_REPO, ROOT
 
 import pyctures
 
+# A Pyctures that has the dials built in keeps them at this handle; one that has not is sent the library as text.
+BUILT_IN = getattr(pyctures, "H_DIALS", None) or getattr(pyctures, "H_CONTROLS", None)
+
 INFO = json.dumps({"width": 400, "height": 300, "pixel_ratio": 2})
 
 
@@ -42,14 +45,17 @@ def stopped():
 
 def test_the_page_is_given_the_library_once_and_one_command_for_each_control():
     r = start("""
-        from controls import *
+        from pydials import *
         a = dial("speed", 0, 10)
         b = dial("size", 5, 50, 20, step=5, unit="px")
     """)
     assert r["error"] is None
     news = [c for c in r["cmds"] if c[0] == "new"]
-    assert len(news) == 1 and news[0][4] == "Function" and "return { controls" in news[0][5][0]
-    assert "export {" not in news[0][5][0]
+    if BUILT_IN:
+        assert news == [] and all(c[3] == BUILT_IN for c in r["cmds"] if c[0] == "call")
+    else:
+        assert len(news) == 1 and news[0][4] == "Function" and "return { dials" in news[0][5][0]
+        assert "export {" not in news[0][5][0]
     assert made(r) == [("dial", 1, {"min": 0, "max": 10, "label": "speed", "default": 0, "value": 0}),
                        ("dial", 2, {"min": 5, "max": 50, "value": 20, "step": 5, "unit": "px", "label": "size", "default": 20})]
     # The scene has no draw(), and still runs: its controls are listened to.
@@ -58,7 +64,7 @@ def test_the_page_is_given_the_library_once_and_one_command_for_each_control():
 
 def test_a_control_is_a_number_wherever_one_is_wanted():
     r = start("""
-        from controls import *
+        from pydials import *
         speed = dial("speed", 0, 10, 4)
         mute = toggle("mute", True)
         print(speed.value, speed * 2, 1 + speed, speed / 8, -speed, speed > 3, speed == 4, int(speed), f"{speed:.1f}")
@@ -72,7 +78,7 @@ def test_a_control_is_a_number_wherever_one_is_wanted():
 
 def test_what_a_hand_changes_arrives_with_the_next_frame_and_on_change_is_called():
     start("""
-        from controls import *
+        from pydials import *
         heard = []
         speed = dial("speed", 0, 10, on_change=heard.append)
         mute = toggle("mute", on_change=lambda on: heard.append(on))
@@ -90,7 +96,7 @@ def test_what_a_hand_changes_arrives_with_the_next_frame_and_on_change_is_called
 
 def test_a_value_set_from_python_is_cleaned_and_sent_to_the_page():
     r = start("""
-        from controls import *
+        from pydials import *
         a = dial("n", 0, 10, step=2)
         w = select("wave", ["sine", "saw"])
         level = meter("level")
@@ -109,7 +115,7 @@ def test_a_value_set_from_python_is_cleaned_and_sent_to_the_page():
 
 def test_a_python_target_gives_its_range_and_is_set_when_the_dial_is_turned():
     r = start("""
-        from controls import *
+        from pydials import *
         class Synth:
             def __init__(self): self.values = {"cutoff": 800, "wave": 1, "on": 0}; self.log = []
             def describe(self, name):
@@ -136,7 +142,7 @@ def test_a_python_target_gives_its_range_and_is_set_when_the_dial_is_turned():
 
 def test_a_python_target_changed_some_other_way_moves_its_control():
     start("""
-        from controls import *
+        from pydials import *
         ball = {"size": 30}
         d = dial("size", ball, "size", min=10, max=90)
         def update(dt):
@@ -154,7 +160,7 @@ def test_a_python_target_changed_some_other_way_moves_its_control():
 
 def test_a_target_in_the_page_is_tied_there_and_its_range_is_told_to_python():
     r = start("""
-        from controls import *
+        from pydials import *
         class Synth:
             page = js.lead              # where its sound is made
         lead = Synth()
@@ -182,7 +188,7 @@ def test_a_target_in_the_page_is_tied_there_and_its_range_is_told_to_python():
 
 def test_a_keyboard_plays_a_python_target_and_calls_on_note_on():
     start("""
-        from controls import *
+        from pydials import *
         log = []
         class Bell:
             def note_on(self, note, velocity): log.append(("on", note, velocity))
@@ -198,7 +204,7 @@ def test_a_keyboard_plays_a_python_target_and_calls_on_note_on():
 def test_a_scope_and_a_meter_fed_from_python_send_a_short_line_each_frame_the_page_asks():
     r = start("""
         import math
-        from controls import *
+        from pydials import *
         wave = scope(lambda: [math.sin(i / 10) for i in range(1000)])
         level = meter(lambda: 0.25)
         graph = scope("height")
@@ -220,16 +226,19 @@ def test_a_scope_and_a_meter_fed_from_python_send_a_short_line_each_frame_the_pa
 
 
 def test_each_run_starts_with_no_controls_and_a_page_of_its_own():
-    first = start("from controls import *\ndial('a', 0, 1)\ndial('b', 0, 1)")
-    second = start("from controls import *\ndial('c', 0, 1)")
+    first = start("from pydials import *\ndial('a', 0, 1)\ndial('b', 0, 1)")
+    second = start("from pydials import *\ndial('c', 0, 1)")
     assert [m[1] for m in made(first)] == [1, 2] and [m[1] for m in made(second)] == [1]
-    assert len([c for c in second["cmds"] if c[0] == "new"]) == 1
-    assert sent(second, "controls")[0][1] == {"$d": {"fresh": True}}
+    # Each run listens anew: the last run's page, and what was made in it, is gone.
+    assert len(sent(first, "listen")) == 1 and len(sent(second, "listen")) == 1
+    if not BUILT_IN:
+        assert len([c for c in second["cmds"] if c[0] == "new"]) == 1
+        assert sent(second, "dials")[0][1] == {"$d": {"fresh": True}}
 
 
 def test_a_mistake_says_what_to_write_and_names_the_line():
     r = start("""
-        from controls import *
+        from pydials import *
         dial("cutoff", {"a": 1})
     """)
     assert r["errorLine"] == 3
@@ -239,5 +248,5 @@ def test_a_mistake_says_what_to_write_and_names_the_line():
 def test_the_pages_half_is_the_javascript_library_itself():
     if not JS_REPO.exists():
         pytest.skip("the JavaScript repository is not beside this one")
-    for theirs, ours in (("controls.js", "src/controls/web/controls.js"), ("examples/standin-synth.js", "examples/standin-synth.js")):
+    for theirs, ours in (("dials.js", "src/pydials/web/dials.js"), ("examples/standin-synth.js", "examples/standin-synth.js")):
         assert (JS_REPO / theirs).read_bytes() == (ROOT / ours).read_bytes(), "run scripts/sync_js.py: %s is not the library's" % ours

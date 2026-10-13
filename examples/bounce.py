@@ -5,7 +5,7 @@
 # Run it:   pyctures run bounce.py
 
 from pyctures import *
-from controls import *
+from pydials import *
 
 layout(at="bottom")
 gravity = dial("gravity", 0, 2000, 900)
