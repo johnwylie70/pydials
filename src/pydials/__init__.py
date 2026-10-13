@@ -1096,7 +1096,8 @@ def theme(**colours):
 # Each kind below is made in the page by one command, as the ones above are. They are in the order of
 # the README: for any program, for games, for music.
 
-__all__ += ["number", "stepper", "text_box", "readout", "checkbox", "choose", "radio", "dropdown"]
+__all__ += ["number", "stepper", "text_box", "readout", "checkbox", "choose", "radio", "dropdown", "xy_pad", "colour_picker",
+            "color_picker", "progress", "light", "busy", "range_slider", "fader"]
 
 
 class Number(_Ranged):
@@ -1179,6 +1180,7 @@ class TextBox(_Bound):
 class Readout(Control):
     """A value or a message shown: it takes no hand. `value` is what it shows."""
     kind = "readout"
+    _asks = ()          # what a source is asked when no setting of it is named: a light asks its level()
 
     def __init__(self, source, param, spec):
         self._pull = None
@@ -1192,8 +1194,12 @@ class Readout(Control):
         page = _in_page(source) if isinstance(param, str) else None
         if page is not None:
             spec["target"], spec["param"] = page, param
+        elif self._asks and _in_page(source) is not None:
+            spec["source"] = _in_page(source)
         elif callable(source):
             self._pull = source
+        elif self._asks and _method(source, *self._asks):
+            self._pull = _method(source, *self._asks)
         elif source is not None and isinstance(param, str):
             self._pull = lambda: _read(source, param)
             d = _describe(source, param)
@@ -1317,3 +1323,278 @@ def dropdown(label="", a=None, b=None, *, value=None, x=None, y=None, share=None
     """One of a long list: dropdown("planet", planets, "Earth"). A tap opens the list over the controls; it is
     moved with a finger or the wheel when it is long, and closes on a pick or a touch outside it."""
     return _chosen(Dropdown, label, a, b, value, x, y, share, span, colour, color, on_change)
+
+
+class XYPad(_Bound):
+    """A square where a finger sets two numbers at once. `x` and `y` are the numbers, and `value` is both."""
+    kind = "xyPad"
+
+    def __init__(self, label, a, b, c, spec):
+        if label is not None and not isinstance(label, str):
+            label, a, b, c = None, label, a, b
+        spec["label"] = label
+        self._params = None
+        self._ways = [[0, 1], [0, 1]]
+        target = None
+        if isinstance(a, (list, tuple)):
+            self._ways = [list(a), list(b if isinstance(b, (list, tuple)) else a)]
+            spec["across"], spec["up"] = self._ways
+        elif a is not None:
+            if not (isinstance(b, str) and isinstance(c, str)):
+                raise TypeError('xy_pad("%s", …) takes two ranges, or a target and the names of two of its settings: '
+                                'xy_pad("filter", lead, "cutoff", "resonance")' % (label or ""))
+            target = a
+        self._tie(spec, target, b if target is not None else None)
+        if target is not None:
+            self._params = (b, c)
+            if "target" in spec:                 # tied in the page, which says where it stands a frame from now
+                spec["paramX"], spec["paramY"] = b, c
+                del spec["param"]
+            else:
+                self._ways = []
+                for name in (b, c):
+                    d = _describe(target, name)
+                    now = _read(target, name)
+                    self._ways.append([d.get("min", 0), d.get("max", 1)] + ([now] if _is_number(now) else []))
+                spec["across"], spec["up"] = self._ways
+                if not label:
+                    spec["label"] = "%s / %s" % (b, c)
+        self._v = [way[2] if len(way) > 2 else (way[0] + way[1]) / 2 for way in self._ways]
+        Control.__init__(self, spec)
+
+    def _clean(self, pair):
+        return [min(max(_value_of(v), min(way[0], way[1])), max(way[0], way[1])) for v, way in zip(pair, self._ways)]
+
+    @property
+    def value(self):
+        return list(self._v)
+
+    @value.setter
+    def value(self, pair):
+        pair = self._clean(pair)
+        if pair == self._v:
+            return
+        self._v = pair
+        self._set("value", pair)
+        self._both(pair)
+
+    x = property(lambda self: self._v[0], lambda self, v: setattr(self, "value", [v, self._v[1]]))
+    y = property(lambda self: self._v[1], lambda self, v: setattr(self, "value", [self._v[0], v]))
+
+    def _both(self, pair):
+        if self._target is not None:
+            for name, value in zip(self._params, pair):
+                _write(self._target, name, value)
+        elif self._owner is not None and callable(getattr(self._owner, "_told", None)):
+            for name, value in zip(self._params, pair):
+                self._owner._told(name, value)
+
+    def _made(self, low, high, default, choices, value):
+        if isinstance(value, (list, tuple)):
+            self._v = list(value)
+
+    def _told(self, pair):
+        self._v = list(pair)
+        self._both(self._v)
+        if self.on_change:
+            self.on_change(self._v[0], self._v[1])
+
+    def _frame(self):
+        if self._target is None:
+            return
+        there = [_read(self._target, name) for name in self._params]
+        if all(_is_number(v) for v in there) and there != self._v:
+            self._v = there
+            self._set("value", there)
+
+    def __iter__(self):
+        return iter(self._v)
+
+
+class ColourPicker(TextBox):
+    """A patch of colour that opens a picker. `value` is the colour as a scene writes one: "tomato", "#3a7bd5"."""
+    kind = "colourPicker"
+
+
+class Progress(Readout):
+    """A bar that fills. `value` is how far it has got."""
+    kind = "progress"
+    _asks = ("progress", "level")
+
+
+class Light(Readout):
+    """A light: on or off, a brightness from 0 to 1, or a colour."""
+    kind = "light"
+    _asks = ("level",)
+
+    @property
+    def on(self):
+        v = _value_of(self._v)
+        if isinstance(v, (list, tuple)):
+            v = max(v)
+        return bool(v) and v != "off"
+
+    @on.setter
+    def on(self, on):
+        self.value = bool(_value_of(on))
+
+    def __bool__(self):
+        return self.on
+
+
+class Busy(Light):
+    """A ring that goes round while something is happening."""
+    kind = "busy"
+    _asks = ()
+
+
+class RangeSlider(_Bound):
+    """A slider with two handles. `low` and `high` are the numbers, and `value` is both."""
+    kind = "rangeSlider"
+
+    def __init__(self, label, a, b, c, spec):
+        if label is not None and not isinstance(label, str):
+            label, a, b, c = None, label, a, b
+        spec["label"] = label
+        self._params = None
+        target = None
+        if _is_number(a):
+            spec.setdefault("min", a)
+            spec.setdefault("max", b)
+            if c is not None:
+                spec.setdefault("value", list(c))
+        elif a is not None:
+            if not (isinstance(b, str) and isinstance(c, str)):
+                raise TypeError('range_slider("%s", …) takes a lowest and a highest number, or a target and the names of two '
+                                'of its settings: range_slider("loop", sample, "start", "end")' % (label or ""))
+            target = a
+        d = self._tie(spec, target, b if target is not None else None)
+        if target is not None:
+            self._params = (b, c)
+            if "target" in spec:
+                spec["paramHigh"] = c
+            else:
+                for key in ("min", "max", "step", "unit"):
+                    if spec.get(key) is None and d.get(key) is not None:
+                        spec[key] = d[key]
+                if spec.get("value") is None:
+                    there = [_read(target, b), _read(target, c)]
+                    if all(_is_number(v) for v in there):
+                        spec["value"] = there
+        self.min = spec.get("min", 0)
+        self.max = spec.get("max", 1)
+        self._v = self._clean(spec.get("value") or [self.min, self.max])
+        if "target" not in spec:
+            spec["value"] = self._v
+        Control.__init__(self, spec)
+
+    def _clean(self, pair):
+        low, high = min(self.min, self.max), max(self.min, self.max)
+        pair = sorted(min(max(_value_of(v), low), high) for v in pair)
+        return pair
+
+    @property
+    def value(self):
+        return list(self._v)
+
+    @value.setter
+    def value(self, pair):
+        pair = self._clean(pair)
+        if pair == self._v:
+            return
+        self._v = pair
+        self._set("value", pair)
+        self._both(pair)
+
+    low = property(lambda self: self._v[0], lambda self, v: setattr(self, "value", [min(_value_of(v), self._v[1]), self._v[1]]))
+    high = property(lambda self: self._v[1], lambda self, v: setattr(self, "value", [self._v[0], max(_value_of(v), self._v[0])]))
+
+    _both = XYPad._both
+
+    def _made(self, low, high, default, choices, value):
+        self.min, self.max = low, high
+        if isinstance(value, (list, tuple)):
+            self._v = list(value)
+
+    def _told(self, pair):
+        self._v = list(pair)
+        self._both(self._v)
+        if self.on_change:
+            self.on_change(self._v[0], self._v[1])
+
+    _frame = XYPad._frame
+
+    def __iter__(self):
+        return iter(self._v)
+
+
+class Fader(_Ranged):
+    kind = "fader"
+
+
+def xy_pad(label=None, a=None, b=None, c=None, *, spring=None, x=None, y=None, size=None, share=None, span=None,
+           colour=None, color=None, on_change=None):
+    """A square where one finger sets two numbers at once, one by going across and one by going up.
+
+    xy_pad("filter", lead, "cutoff", "resonance") is two settings of `lead`; xy_pad("spot", [0, 100], [0, 50]) is
+    two plain ranges (a third number in a range is where it starts; without one, the middle). `pad.x` and `pad.y`
+    are the numbers and on_change(x, y) hears them. spring=True lets it go back when it is let go."""
+    return XYPad(label, a, b, c, _options(spring=spring, x=x, y=y, size=size, share=share, span=span, colour=colour,
+                                          color=color, on_change=on_change))
+
+
+def colour_picker(label="", a=None, b=None, *, value=None, colours=None, x=None, y=None, share=None, span=None,
+                  colour=None, color=None, on_change=None):
+    """A patch of colour that opens a picker: `ink = colour_picker("ink", "tomato")`, then circle(x, y, 40, ink.value).
+
+    In the picker, drag in the square for how strong and how bright, along the strip for the hue, or tap a named
+    colour. colours= is your own list of named colours, or False for none; colour_picker("ink", pen, "colour") is a
+    setting of `pen`."""
+    if a is None and value is None:
+        a = "tomato"
+    return ColourPicker(label, a, b, _options(value=value, colours=colours, x=x, y=y, share=share, span=span,
+                                              colour=colour, color=color, on_change=on_change))
+
+
+color_picker = colour_picker
+
+
+def progress(label="", source=None, setting=None, *, value=None, min=None, max=None, percent=None, size=None, width=None,
+             x=None, y=None, share=None, span=None, colour=None, color=None):
+    """A bar that fills: `bar = progress("loading")` then bar.value = 0.4, or progress("loading", lambda: done / total).
+
+    It runs from 0 to 1 unless min= and max= say otherwise; percent=False leaves the number out."""
+    return Progress(source, setting, _options(label=label, value=value, min=min, max=max, percent=percent, size=size,
+                                              width=width, x=x, y=y, share=share, span=span, colour=colour, color=color))
+
+
+def light(label="", source=None, setting=None, *, value=None, size=None, x=None, y=None, share=None, span=None,
+          colour=None, color=None):
+    """A light: light("ready", True), then ready.on = False; light("signal", lead) is as bright as `lead` is loud;
+    `lamp.value = "red"` shines that colour, and a number from 0 to 1 is how bright."""
+    return Light(source, setting, _options(label=label, value=value, size=size, x=x, y=y, share=share, span=span,
+                                           colour=colour, color=color))
+
+
+def busy(label="", source=None, *, value=None, size=None, x=None, y=None, share=None, span=None, colour=None, color=None):
+    """A ring that goes round while something is happening: `wait = busy("loading")`, then wait.on = False."""
+    return Busy(source if source is not None else True, None, _options(label=label, value=value, size=size, x=x, y=y,
+                                                                         share=share, span=span, colour=colour, color=color))
+
+
+def range_slider(label=None, a=None, b=None, c=None, *, min=None, max=None, value=None, step=None, unit=None, digits=None,
+                 vertical=None, x=None, y=None, size=None, share=None, span=None, colour=None, color=None, on_change=None):
+    """A slider with a low and a high handle: `price = range_slider("price", 0, 100, [20, 80])`, then price.low and
+    price.high. range_slider("loop", sample, "start", "end") is two settings of `sample`. on_change(low, high)."""
+    return RangeSlider(label, a, b, c, _options(min=min, max=max, value=value, step=step, unit=unit, digits=digits,
+                                                vertical=vertical, x=x, y=y, size=size, share=share, span=span,
+                                                colour=colour, color=color, on_change=on_change))
+
+
+def fader(label=None, a=None, b=None, c=None, *, min=None, max=None, value=None, step=None, unit=None, log=None,
+          digits=None, default=None, x=None, y=None, size=None, share=None, span=None, colour=None, color=None,
+          on_change=None):
+    """An upright slider with the look of a mixing desk's: fader("volume", lead, "volume") or fader("level", 0, 1, 0.7)."""
+    return Fader(label, a, b, c, _options(min=min, max=max, value=value, step=step, unit=unit, log=log, digits=digits,
+                                          default=default, x=x, y=y, size=size, share=share, span=span, colour=colour,
+                                          color=color, on_change=on_change))

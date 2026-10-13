@@ -396,9 +396,40 @@ planet = dropdown("planet", ["Mercury", "Venus", "Earth", "Mars", "Jupiter", "Sa
 | `radio(label, choices, start)` | The same, one under another with a round mark each. |
 | `dropdown(label, choices, start)` | One of a long list. A tap opens the whole list over the controls; a long one is moved with a finger or the wheel; it closes on a pick or a touch outside it. |
 
+![An XY pad with its dot and the two numbers under it, a colour patch, a light that is on, a busy ring, a progress bar at 40%, a slider with two handles, and three faders](docs/images/pad-colour-progress-fader.png)
+
+```python
+pad = xy_pad("filter", lead, "cutoff", "resonance")     # one finger, two settings
+ink = colour_picker("ink", "tomato")
+price = range_slider("price", 0, 100, [20, 80])
+bar = progress("loading")
+t = 0
+
+def update(dt):
+    global t
+    t += dt
+    bar.value = t / 10                                  # from 0 to 1
+
+def draw():
+    background("midnightblue")
+    circle(width / 2, height / 2, 60, ink.value)        # a colour, as you would write one
+```
+
+| | |
+|---|---|
+| `xy_pad(label, target, "across", "up")` | A square where one finger sets two numbers at once: across is the first and up is the second. `pad.x` and `pad.y` are the numbers, and `pad.value` is both. `xy_pad(label, [0, 100], [0, 50])` is two plain ranges, starting in the middle (a third number in a range says where). The dot comes to your finger; Shift moves it a tenth as far; two taps put it back. Options: `spring=True` (it goes back when you let go), `size=`, `on_change(x, y)`. |
+| `colour_picker(label, colour)` | A patch of the colour. A tap opens a picker: drag in the square for how strong and how bright, along the strip for the hue, or tap one of sixteen named colours. `ink.value` is the colour as you would write it (`"tomato"`, `"#3a7bd5"`), ready for a drawing call. Options: `colours=` (your own named colours, or `False` for none), `on_change(colour)`. `color_picker` is the same. |
+| `progress(label, value)` | A bar that fills, from 0 to 1 (or `min=` to `max=`). Set `bar.value`, or give it a function: `progress("loading", lambda: done / total)`. `percent=False` leaves the number out. |
+| `light(label, on)` | A light. `ready.on = True`; a number from 0 to 1 is how bright; a colour (`lamp.value = "red"`) shines that colour. `light("signal", lead)` is as bright as a target is loud, and `light("hot", lambda: heat > 90)` asks a function. |
+| `busy(label)` | A ring that goes round while something is happening; `wait.on = False` stops it. |
+| `range_slider(label, min, max, [low, high])` | A slider with two handles. `price.low` and `price.high` are the numbers. The handle nearer your finger moves, and neither passes the other. `range_slider(label, target, "start", "end")` is two settings. `on_change(low, high)`. |
+| `fader(…)` | A slider that stands upright with the look of a mixing desk's. It is a slider in every other way: `fader("volume", lead, "volume")`. |
+
+![The colour picker open under its patch: a square of one hue from white to black, a strip of hues, and sixteen named colours](docs/images/colour-picker.png)
+
 **Typing.** A canvas cannot be typed into, so while you type a real box for text lies over the control: your device's own keyboard, caret, selection and paste all work. On a phone or tablet the keyboard comes up when your finger lifts, and a number asks for the number keys. What you type goes to the box and not to the scene's `keys`. It works the same when the picture is drawn smaller or larger, when the page is scrolled, and when the scene is shut inside a frame (as a preview's is): nothing is asked of the page around it.
 
-**Keys.** The control you touched last takes the arrow keys: on a number box they step it (Shift ten at a time, Home and End go to the ends, Enter types). Space ticks a checkbox, the arrows move among choices, and on a dropdown Enter opens the list, the arrows move through it, Enter picks and Escape closes. Tab goes to the next control that takes keys.
+**Keys.** The control you touched last takes the arrow keys: on a number box they step it (Shift ten at a time, Home and End go to the ends, Enter types). Space ticks a checkbox, the arrows move among choices, and on a dropdown Enter opens the list, the arrows move through it, Enter picks and Escape closes. The arrows move an XY pad's dot and the handle of a two-handled slider that was touched last. Tab goes to the next control that takes keys.
 
 ## Targets
 

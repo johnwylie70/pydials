@@ -105,3 +105,74 @@ def test_a_checkbox_is_true_or_false_and_choose_radio_and_dropdown_are_one_of_a_
     assert sent(r, "set") == [[4, "index", 1]]
     r = tick({"c": [1, False, 2, 2, 3, 1]})
     assert r["out"].strip() == "False hard 1 [False, 'hard']"
+
+
+def test_an_xy_pad_is_two_numbers_and_a_python_target_is_set_both_ways():
+    r = start("""
+        from pydials import *
+        heard = []
+        lead = {"cutoff": 800, "res": 0.3}
+        spot = xy_pad("spot", [0, 100], [0, 50], on_change=lambda x, y: heard.append((x, y)))
+        tied = xy_pad("filter", lead, "cutoff", "res")
+        print(spot.x, spot.y, spot.value, tied.x, tied.y)
+        def update(dt):
+            spot.x = 150
+            print(spot.value, tied.value, lead, heard)
+    """)
+    assert r["error"] is None
+    assert made(r) == [("xyPad", 1, {"label": "spot", "across": [0, 100], "up": [0, 50]}),
+                       ("xyPad", 2, {"label": "filter", "across": [0, 1, 800], "up": [0, 1, 0.3]})]
+    assert out(r)[:6] == ["50.0", "25.0", "[50.0,", "25.0]", "800", "0.3"]
+    assert sent(r, "set") == [[1, "value", [100, 25.0]]]
+    r = tick({"c": [1, [10, 20], 2, [0.5, 0.25]]})
+    assert r["out"].strip() == "[100, 20] [0.5, 0.25] {'cutoff': 0.5, 'res': 0.25} [(10, 20)]"
+
+
+def test_a_colour_a_bar_a_light_and_a_busy_ring_are_sent_what_they_show():
+    r = start("""
+        from pydials import *
+        done = 3
+        class Amp:
+            def level(self): return 0.5
+        ink = colour_picker("ink", "tomato")
+        sky = color_picker("sky")
+        bar = progress("files", lambda: done, max=12)
+        ready = light("ready", True)
+        signal = light("signal", Amp())
+        wait = busy("working")
+        print(ink.value, sky.value, bool(ready), wait.on)
+        def update(dt):
+            print(ink.value, ready.on)
+            ink.value = "gold"
+            ready.on = False
+            ready.value = "red"
+            wait.on = False
+    """)
+    assert r["error"] is None
+    assert made(r) == [("colourPicker", 1, {"value": "tomato", "label": "ink"}), ("colourPicker", 2, {"value": "tomato", "label": "sky"}),
+                       ("progress", 3, {"label": "files", "max": 12, "value": 3}), ("light", 4, {"label": "ready", "value": True}),
+                       ("light", 5, {"label": "signal", "value": 0.5}), ("busy", 6, {"label": "working", "value": True})]
+    assert out(r) == ["tomato", "tomato", "True", "True", "tomato", "True"]
+    assert sent(r, "set") == [[1, "value", "gold"], [4, "value", False], [4, "value", "red"], [6, "value", False]]
+    r = tick({"c": [1, "#00ff00"]})
+    assert r["out"].strip() == "#00ff00 True"         # what a hand mixed, and the light that was told a colour
+
+
+def test_a_slider_with_two_handles_is_a_low_and_a_high_and_a_fader_is_a_number():
+    r = start("""
+        from pydials import *
+        heard = []
+        price = range_slider("price", 0, 100, [20, 80], on_change=lambda low, high: heard.append((low, high)))
+        vol = fader("vol", 0, 1, 0.7)
+        print(price.low, price.high, list(price), vol * 2)
+        def update(dt):
+            price.low = 95
+            print(price.value, heard)
+    """)
+    assert r["error"] is None
+    assert made(r) == [("rangeSlider", 1, {"min": 0, "max": 100, "value": [20, 80], "label": "price"}),
+                       ("fader", 2, {"min": 0, "max": 1, "value": 0.7, "label": "vol", "default": 0.7})]
+    assert out(r)[:5] == ["20", "80", "[20,", "80]", "1.4"]
+    assert sent(r, "set") == [[1, "value", [80, 80]]]
+    r = tick({"c": [1, [30, 60]]})
+    assert r["out"].strip() == "[60, 60] [(30, 60)]"     # update() has run again: the low end is put as far up as the high one

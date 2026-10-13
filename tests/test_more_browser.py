@@ -64,3 +64,34 @@ def update(dt):
     w.wait("JSON.stringify(window.result) === '[true,\"hard\",2,\"Mercury\"]' && !%s.popup" % PANEL)
     w.clean()
     w.page.close()
+
+
+def test_a_pad_is_pressed_a_colour_is_picked_and_a_fader_is_raised_and_python_has_them(browser, pyctures_run, tmp_path):
+    w = Watched(browser, pyctures_run(scene_file(tmp_path, """
+from pyctures import *
+from pydials import *
+
+pad = xy_pad("spot", [0, 100], [0, 100])
+ink = colour_picker("ink", "tomato")
+vol = fader("vol", 0, 100, 0)
+price = range_slider("price", 0, 100, [20, 80])
+bar = progress("vol", lambda: vol / 100)
+lamp = light("loud", lambda: vol > 50)
+
+def update(dt):
+    js.result = [round(pad.x), round(pad.y), ink.value, round(vol.value), [round(v) for v in price]]
+""")).url)
+    w.ready(6)
+    w.wait("JSON.stringify(window.result) === '[50,50,\"tomato\",0,[20,80]]'")
+    # A quarter of the way across the pad's square and four fifths of the way up it.
+    x, y = w.page.evaluate("(() => { const c = document.querySelector('[data-pyctures-src] canvas'), p = c[Symbol.for('dials.panel')].items[0], s = p.pad(p.u), b = c.getBoundingClientRect(); return [b.left + s.x + s.side * 0.25, b.top + s.y + s.side * 0.2] })()")
+    w.page.mouse.click(x, y)
+    w.page.mouse.click(*w.spot(1, 0.5, 0.65))
+    w.wait("%s.popup.w > 0" % PANEL)
+    # The ninth of the named colours is the first of the second line: blue.
+    x, y = w.page.evaluate("(() => { const c = document.querySelector('[data-pyctures-src] canvas'), n = c[Symbol.for('dials.panel')].popup.names, b = c.getBoundingClientRect(); return [b.left + n.x + 0.5 * n.each, b.top + n.y + 1.5 * n.h] })()")
+    w.page.mouse.click(x, y)
+    w.drag(2, 0, -500)                      # the fader, all the way up
+    w.wait("JSON.stringify(window.result) === '[25,80,\"blue\",100,[20,80]]' && %s.items[4].done === 1 && %s.items[5].on" % (PANEL, PANEL))
+    w.clean()
+    w.page.close()

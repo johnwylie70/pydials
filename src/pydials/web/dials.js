@@ -71,7 +71,7 @@ const THEME = {
 }
 
 /** A spec's keys in one spelling: on_change is onChange, color is colour. */
-const SPELLING = { color: 'colour', on_change: 'onChange', on_press: 'onPress', on_release: 'onRelease', on_note_on: 'onNoteOn', on_note_off: 'onNoteOff', title: 'label', on_enter: 'onEnter' }
+const SPELLING = { color: 'colour', on_change: 'onChange', on_press: 'onPress', on_release: 'onRelease', on_note_on: 'onNoteOn', on_note_off: 'onNoteOff', title: 'label', show_value: 'showValue', log_from: 'logFrom', min_scale: 'minScale', max_scale: 'maxScale', on_resize: 'onResize' }
 const spelled = (spec) => {
   const out = {}
   for (const key in spec) out[SPELLING[key] || key] = spec[key]
@@ -626,6 +626,10 @@ const TAP_REACH = 6
  * next, then clicks over), or tap a notch or a name to go straight there. Two taps put it back.
  */
 class Rotary extends Select {
+  constructor(panel, kind, spec) {
+    super(panel, kind, spec)
+    this.showValue = spec.showValue
+  }
   scaleOf() { return 1 }
   stretch() { return [0.9, 1] }
   get knob() { return sized(this.size, 36, 48, 64) }
@@ -641,16 +645,18 @@ class Rotary extends Select {
       for (const choice of this.choices) this.side = Math.max(this.side, g.measureText(String(choice)).width)
       this.side = Math.min(this.side, this.nameRoom * u) + 8 * u
     }
-    // With the names round it, the one it is on is lit there: it is not written again underneath.
-    return [Math.max(76 * u, across + 26 * u + 2 * this.side), across + (this.named ? 60 : 50) * u]
+    // With the names round it, the one it is on is lit there: it is not written again underneath, unless asked for.
+    return [Math.max(76 * u, across + 26 * u + 2 * this.side), across + (this.named ? (this.reads ? 78 : 66) : 50) * u]
   }
   /** Where notch i is round the knob: an angle, from lower left round the top to lower right. */
   angle(i) {
     const n = this.choices.length
     return TAU * 0.375 + TAU * 0.75 * (n > 1 ? i / (n - 1) : 0.5)
   }
-  /** The middle of the knob: a little lower when names are written round it, to leave room for the one at the top. */
-  centre(u) { return [this.x + this.w / 2, this.y + (this.named ? 28 : 20) * u + (this.h - (this.named ? 42 : 40) * u) / 2] }
+  /** The middle of the knob: where a dial's is in a box as tall, so that a rotary and the dials beside it are on one line. */
+  centre(u) { return [this.x + this.w / 2, this.y + 20 * u + (this.h - 40 * u) / 2] }
+  /** Is the choice written under the knob? Where no names are round it, unless told not to (`showValue: false`); where they are, only if asked (`showValue: true`). */
+  get reads() { return this.showValue ?? !this.named }
   go(i) {
     i = clamp(i, 0, this.choices.length - 1)
     if (i === this.i) return
@@ -712,7 +718,8 @@ class Rotary extends Select {
       // Left of the knob a name ends at its notch, right of it a name starts there, and at the top it is centred.
       const side = Math.abs(c) < 0.25 ? 'center' : c < 0 ? 'right' : 'left'
       const most = side === 'center' ? this.w - 8 * u : this.side - 6 * u
-      const text = String(this.choices[i]), tx = cx + c * (r + 8 * u), ty = cy + sn * (r + 9 * u)
+      // (The name at the top sits close to the knob, to stay clear of the title above it.)
+      const text = String(this.choices[i]), tx = cx + c * (r + 8 * u), ty = cy + sn * (r + (side === 'center' ? 7 : 9) * u)
       g.font = `${on ? '600 ' : ''}${10 * u}px ${THEME.font}`
       const wide = Math.min(most, g.measureText(text).width)
       words(g, text, tx, ty, 10 * u, on ? THEME.text : THEME.dim, side, on ? '600' : '', most)
@@ -725,7 +732,7 @@ class Rotary extends Select {
     g.moveTo(cx + Math.cos(a) * (r - 18 * u), cy + Math.sin(a) * (r - 18 * u))
     g.lineTo(cx + Math.cos(a) * (r - 9 * u), cy + Math.sin(a) * (r - 9 * u))
     g.stroke()
-    if (!this.named) words(g, String(this.value ?? ''), cx, this.y + this.h - 11 * u, 12 * u, THEME.text, 'center', '600', this.w - 6 * u)
+    if (this.reads) words(g, String(this.value ?? ''), cx, this.y + this.h - 11 * u, 12 * u, THEME.text, 'center', '600', this.w - 6 * u)
   }
 }
 
@@ -2631,6 +2638,8 @@ class Panel {
 // for games, for music. They are put among the kinds at the end of this part, and `more` has the
 // function a scene calls for each.
 
+SPELLING.on_enter = 'onEnter'
+
 /**
  * THE KEYS go to the control that was touched last. `on` says what each key it knows does (it is
  * handed whether Shift is down); Tab goes on to the next control that takes keys, and Shift and Tab
@@ -2698,7 +2707,7 @@ function typeIn(control, o) {
   input.setAttribute('aria-label', control.label)
   input.dataset.dialsTyping = ''
   const s = input.style, u = control.u
-  s.cssText = `position:absolute;box-sizing:border-box;margin:0;padding:0 ${Math.round(8 * u)}px;border:1.5px solid ${control.accent};border-radius:${Math.round(6 * u)}px;outline:none;background:${THEME.well};color:${THEME.text};font:600 ${Math.max(16, Math.round(14 * u))}px ${THEME.font};text-align:${o.align || 'left'};-webkit-appearance:none;appearance:none;touch-action:manipulation`
+  s.cssText = `position:absolute;box-sizing:border-box;margin:0;padding:0 ${Math.round(8 * u)}px;border:1.5px solid ${control.accent};border-radius:${Math.round(6 * u)}px;outline:none;background:${THEME.well};color:${THEME.text};font:600 ${Math.max(16, Math.round(14 * u))}px ${THEME.font};text-align:${o.align || 'left'};-webkit-appearance:none;appearance:none;touch-action:manipulation;user-select:text;-webkit-user-select:text`
   const typing = panel.typing = {
     control, input,
     /** Put it on its control, which the layout may have moved; a control that has gone, or gone out of sight, is typed into no more. */
@@ -3294,7 +3303,7 @@ class ListPopup extends Popup {
   }
   wheel(by) { this.scroll = clamp((this.scroll || 0) + by, 0, this.most || 0); this.touch() }
   lineAt(p) { return Math.floor((p.y - this.y - 4 * this.u + this.scroll) / (LIST_LINE * this.u)) }
-  press(p) { this.from = { x: p.x, y: p.y }; this.last = p.y; this.moved = false; this.down_ = this.lineAt(p); this.touch() }
+  press(p) { this.from = { x: p.x, y: p.y }; this.last = p.y; this.moved = false; this.pressed = this.lineAt(p); this.touch() }
   drag(p) {
     if (!this.moved && Math.abs(p.y - this.from.y) < TAP_REACH * this.u) return
     this.moved = true
@@ -3303,7 +3312,7 @@ class ListPopup extends Popup {
   }
   lift(p) {
     const i = this.lineAt(p), o = this.owner
-    this.down_ = null
+    this.pressed = null
     if (this.moved || i < 0 || i >= o.choices.length) return this.touch()
     this.close()
     o.pick(i)
@@ -3325,7 +3334,7 @@ class ListPopup extends Popup {
     for (let i = Math.max(0, Math.floor(this.scroll / line) - 1); i < o.choices.length; i++) {
       const y = top + i * line
       if (y > this.y + this.h) break
-      const on = i === o.i, pressed = i === this.down_ && !this.moved, keyed = this.panel.keyed && i === this.on
+      const on = i === o.i, pressed = i === this.pressed && !this.moved, keyed = this.panel.keyed && i === this.on
       if (on || pressed || keyed) {
         rounded(g, this.x + 4 * u, y + 2 * u, this.w - 8 * u, line - 4 * u, 7 * u)
         g.fillStyle = pressed ? THEME.track : THEME.knob
@@ -3393,8 +3402,674 @@ class Dropdown extends Choose {
   }
 }
 
-Object.assign(KINDS, { number: NumberBox, textBox: TextBox, readout: Readout, checkbox: Checkbox, choose: Choose, radio: Radio, dropdown: Dropdown })
-for (const kind of ['readout']) SLIDES.add(kind)
+/**
+ * WHAT A SCENE IS GIVEN for a control whose numbers are called x and y. On the control itself those
+ * two names say where it is drawn, so the scene holds this instead: the numbers under their own
+ * names, with what every control has (value, label, held, onChange, remove, place). The control it
+ * stands for is its `control`, and keeps the two numbers as `vx` and `vy`.
+ */
+function standIn(control, numbers) {
+  const face = { control, remove: () => control.remove(), place: (x, y) => control.place(x, y), valueOf: () => control.value, toString: () => String(control.value) }
+  const written = (name) => {
+    for (let o = control; o; o = Object.getPrototypeOf(o)) { const d = Object.getOwnPropertyDescriptor(o, name); if (d) return !!(d.set || d.writable) }
+    return true
+  }
+  for (const name of ['value', 'label', 'held', 'onChange', 'id', 'kind', ...numbers]) {
+    const kept = name === 'x' ? 'vx' : name === 'y' ? 'vy' : name
+    Object.defineProperty(face, name, { enumerable: true, get: () => control[kept], set: (value) => { if (written(kept)) control[kept] = value } })
+  }
+  return face
+}
+
+/**
+ * ONE NUMBER IN A RANGE that is part of a control with several: each way of an XY pad, each end
+ * of a range. It takes its range from a target as a dial does, and keeps to it in the same way.
+ */
+class Axis {
+  constructor(target, param, spec = {}) {
+    this.target = target && param != null ? target : null
+    this.param = param
+    const d = this.target ? describe(target, param) : {}
+    this.name = spec.label ?? d.label ?? d.name ?? (param != null ? String(param) : '')
+    this.min = spec.min ?? d.min ?? 0
+    this.max = spec.max ?? d.max ?? 1
+    this.step = spec.step ?? d.step ?? (d.kind === 'int' ? 1 : 0)
+    this.unit = unitOf(spec.unit ?? d.unit ?? '')
+    this.digits = spec.digits ?? d.digits
+    this.log = this.min > 0 && this.max > this.min && (spec.log ?? d.log ?? (d.curve === 'log' || (this.unit === 'Hz' && this.max / this.min >= 100)))
+    const now = spec.value ?? (this.target ? readTarget(target, param) : undefined)
+    this.default = spec.default ?? d.default ?? (typeof now === 'number' ? now : this.fromPos(0.5))
+    this.v = this.clean(typeof now === 'number' ? now : this.default)
+    if (spec.value != null && this.target) writeTarget(target, param, this.v)
+  }
+  get pos() { return this.toPos(this.v) }
+  /** Take a value; the target is told. Was it a new one? */
+  put(value) {
+    value = this.clean(value)
+    if (value === this.v) return false
+    this.v = value
+    if (this.target) writeTarget(this.target, this.param, value)
+    return true
+  }
+  /** Go to a place from 0 to 1 along the range. */
+  slide(pos) { return this.put(this.fromPos(clamp(pos, 0, 1))) }
+  /** A target that was changed some other way is followed. Did it move? */
+  follow() {
+    if (!this.target) return false
+    const now = readTarget(this.target, this.param)
+    if (typeof now !== 'number' || Math.abs(now - this.v) <= Math.abs(this.max - this.min) * 1e-6) return false
+    this.v = clamp(now, Math.min(this.min, this.max), Math.max(this.min, this.max))
+    return true
+  }
+}
+for (const name of ['clean', 'toPos', 'fromPos']) Axis.prototype[name] = Ranged.prototype[name]
+
+/**
+ * THE XY PAD: a square where one finger sets two numbers at once, one by going across and one by
+ * going up. `pad.x` and `pad.y` are the numbers and `pad.value` is both. The dot comes to the
+ * finger and follows it; Shift moves it a tenth as far; two taps put it back. `spring: true` lets
+ * it go back to where it started whenever it is let go, as a joystick does.
+ */
+class XYPad extends Control {
+  constructor(panel, kind, spec) {
+    super(panel, kind, spec)
+    const way = (given, param) => new Axis(spec.target, param, Array.isArray(given) ? { min: given[0], max: given[1], value: given[2] } : given || {})
+    this.ax = way(spec.across, spec.paramX)
+    this.ay = way(spec.up, spec.paramY)
+    this.target = spec.target || null
+    this.param = spec.paramX
+    this.spring = !!spec.spring
+    this.many = false
+    if (!this.label && this.target) this.label = `${this.ax.name} / ${this.ay.name}`
+    this.face = standIn(this, ['x', 'y'])
+  }
+  // Its two numbers. (On the control itself x and y say where it is drawn: the scene reads them as pad.x and pad.y.)
+  get vx() { return this.ax.v }
+  set vx(value) { if (this.ax.put(value)) this.touch() }
+  get vy() { return this.ay.v }
+  set vy(value) { if (this.ay.put(value)) this.touch() }
+  get value() { return [this.ax.v, this.ay.v] }
+  set value(pair) { if (this.ax.put(pair[0]) | this.ay.put(pair[1])) this.touch() }
+  get v() { return this.value }
+  scaleOf() { return 1 }
+  get side() { return sized(this.size, 110, 150, 210) }
+  natural(u) { return [(this.side + 16) * u, (this.side + 48) * u] }
+  /** The square itself. */
+  pad(u) { const side = Math.min(this.w - 16 * u, this.h - 48 * u); return { x: this.x + (this.w - side) / 2, y: this.y + 24 * u, side } }
+  /** Go to a place: 0 to 1 across, and 0 to 1 up. */
+  go(px, py) {
+    if (!(this.ax.slide(px) | this.ay.slide(py))) return
+    if (this.onChange) this.onChange(this.ax.v, this.ay.v, this)
+    this.panel.told.push(this.id, this.value)
+    this.touch()
+  }
+  reset() { this.go(this.ax.toPos(this.ax.clean(this.ax.default)), this.ay.toPos(this.ay.clean(this.ay.default))) }
+  down(p) {
+    this.last = { x: p.x, y: p.y }
+    const s = this.pad(this.u)
+    // The dot comes to the finger; with Shift it stays, and is moved a tenth as far from where it is.
+    this.where = p.shift ? [this.ax.pos, this.ay.pos] : [clamp((p.x - s.x) / s.side, 0, 1), clamp(1 - (p.y - s.y) / s.side, 0, 1)]
+    this.go(...this.where)
+    this.touch()
+  }
+  move(p) {
+    const s = this.pad(this.u), fine = p.shift ? 0.1 : 1
+    this.where = [clamp(this.where[0] + (p.x - this.last.x) / s.side * fine, 0, 1), clamp(this.where[1] - (p.y - this.last.y) / s.side * fine, 0, 1)]
+    this.last = { x: p.x, y: p.y }
+    this.go(...this.where)
+  }
+  up() { if (this.spring) this.reset(); this.touch() }
+  keyDown(e) {
+    const by = (dx, dy) => (fine) => this.go(this.ax.pos + dx * (fine ? 0.005 : 0.05), this.ay.pos + dy * (fine ? 0.005 : 0.05))
+    return keysOf(this, e, { ArrowLeft: by(-1, 0), ArrowRight: by(1, 0), ArrowUp: by(0, 1), ArrowDown: by(0, -1), Home: () => this.reset() })
+  }
+  frame() { if (!this.held && (this.ax.follow() | this.ay.follow())) this.touch() }
+  draw(g, u) {
+    const s = this.pad(u), px = s.x + s.side * this.ax.pos, py = s.y + s.side * (1 - this.ay.pos)
+    words(g, this.label, this.x + this.w / 2, this.y + 12 * u, 12 * u, THEME.dim, 'center', '', this.w - 6 * u)
+    rounded(g, s.x, s.y, s.side, s.side, 9 * u)
+    g.fillStyle = THEME.well
+    g.fill()
+    g.save()
+    rounded(g, s.x, s.y, s.side, s.side, 9 * u)
+    g.clip()
+    g.strokeStyle = THEME.edge
+    g.lineWidth = 1
+    g.beginPath()
+    for (let i = 1; i < 4; i++) { g.moveTo(s.x + s.side * i / 4, s.y); g.lineTo(s.x + s.side * i / 4, s.y + s.side); g.moveTo(s.x, s.y + s.side * i / 4); g.lineTo(s.x + s.side, s.y + s.side * i / 4) }
+    g.stroke()
+    // Lines from the dot to the edges: where it is each way is read off them.
+    g.strokeStyle = this.accent
+    g.globalAlpha = 0.45
+    g.lineWidth = 1.25 * u
+    g.beginPath(); g.moveTo(px, s.y); g.lineTo(px, s.y + s.side); g.moveTo(s.x, py); g.lineTo(s.x + s.side, py); g.stroke()
+    g.globalAlpha = this.held ? 0.3 : 0.18
+    g.fillStyle = this.accent
+    g.beginPath(); g.arc(px, py, (this.held ? 20 : 15) * u, 0, TAU); g.fill()
+    g.globalAlpha = 1
+    g.restore()
+    g.fillStyle = this.accent
+    g.beginPath(); g.arc(clamp(px, s.x + 7 * u, s.x + s.side - 7 * u), clamp(py, s.y + 7 * u, s.y + s.side - 7 * u), 7 * u, 0, TAU); g.fill()
+    g.strokeStyle = THEME.text
+    g.lineWidth = 2 * u
+    g.stroke()
+    words(g, `${shown(this.ax.v, this.ax)}  ·  ${shown(this.ay.v, this.ay)}`, this.x + this.w / 2, this.y + this.h - 11 * u, 12 * u, THEME.text, 'center', '', this.w - 6 * u)
+    ring(g, this, s.x, s.y, s.side, s.side, 9 * u, u)
+  }
+}
+
+// --- colours
+/** A colour as the browser reads it, any way it may be written ("tomato", "#f60", "rgb(…)"): [red, green, blue], each 0 to 255. */
+function rgbOf(colour) {
+  const g = rgbOf.g ||= Object.assign(document.createElement('canvas'), { width: 1, height: 1 }).getContext('2d', { willReadFrequently: true })
+  g.clearRect(0, 0, 1, 1)
+  g.fillStyle = '#000'
+  g.fillStyle = String(colour)
+  g.fillRect(0, 0, 1, 1)
+  return [...g.getImageData(0, 0, 1, 1).data].slice(0, 3)
+}
+/** Red, green and blue as a hue (0 to 360), and how strong and how bright it is (each 0 to 1); and back. */
+function hsvOf([r, g, b]) {
+  r /= 255; g /= 255; b /= 255
+  const high = Math.max(r, g, b), d = high - Math.min(r, g, b)
+  const h = !d ? 0 : high === r ? ((g - b) / d + 6) % 6 : high === g ? (b - r) / d + 2 : (r - g) / d + 4
+  return [h * 60, high ? d / high : 0, high]
+}
+function rgbFrom(h, s, v) {
+  const f = (n) => { const k = (n + h / 60) % 6; return Math.round(255 * (v - v * s * Math.max(0, Math.min(k, 4 - k, 1)))) }
+  return [f(5), f(3), f(1)]
+}
+const hexOf = (rgb) => '#' + rgb.map((n) => n.toString(16).padStart(2, '0')).join('')
+/** Is a colour light, so that a mark on it should be dark? */
+const isLight = (rgb) => rgb[0] * 0.299 + rgb[1] * 0.587 + rgb[2] * 0.114 > 150
+
+/** The colours a picker offers by name, in two lines: ones a child knows, by the names a scene can use. */
+const NAMED = ['red', 'orange', 'gold', 'yellow', 'limegreen', 'green', 'turquoise', 'skyblue', 'blue', 'purple', 'hotpink', 'brown', 'white', 'silver', 'grey', 'black']
+
+/** What a colour picker opens: a square of every strength and brightness of one hue, a strip of hues, and the named colours. */
+class ColourPopup extends Popup {
+  arrange(g, u) {
+    const o = this.owner, f = o.field(u), names = o.colours.length, lines = Math.ceil(names / 8)
+    this.put(248 * u, (8 + 150 + 12 + 22 + (names ? 12 + lines * 28 : 0) + 8) * u, [f.x, f.y, f.w, f.h])
+    const x = this.x + 8 * u, w = this.w - 16 * u
+    this.square = { x, y: this.y + 8 * u, w, h: 150 * u }
+    this.strip = { x, y: this.square.y + this.square.h + 12 * u, w, h: 22 * u }
+    this.names = { x, y: this.strip.y + this.strip.h + 12 * u, each: w / 8, h: 28 * u }
+  }
+  within(r, p, slack = 0) { return p.x >= r.x - slack && p.x < r.x + r.w + slack && p.y >= r.y - slack && p.y < r.y + r.h + slack }
+  nameAt(p) {
+    const n = this.names, o = this.owner
+    if (p.y < n.y || p.x < n.x) return null
+    const i = Math.floor((p.y - n.y) / n.h) * 8 + Math.floor((p.x - n.x) / n.each)
+    return p.x < n.x + 8 * n.each && i < o.colours.length ? o.colours[i] : null
+  }
+  press(p) {
+    const u = this.u
+    this.part = this.within(this.square, p) ? 'sv' : this.within(this.strip, p, 6 * u) ? 'hue' : this.nameAt(p) ? 'name' : null
+    this.drag(p)
+  }
+  drag(p) {
+    const o = this.owner
+    if (this.part === 'sv') o.mix(o.hue, clamp((p.x - this.square.x) / this.square.w, 0, 1), 1 - clamp((p.y - this.square.y) / this.square.h, 0, 1))
+    else if (this.part === 'hue') o.mix(clamp((p.x - this.strip.x) / this.strip.w, 0, 1) * 360, o.strong, o.bright)
+    this.touch()
+  }
+  lift(p) {
+    // A colour picked by its name is the choice made: the picker closes.
+    const name = this.part === 'name' && this.nameAt(p)
+    this.part = null
+    if (name) { this.owner.take(name); this.close() }
+  }
+  closed() { this.owner.touch() }
+  keyDown(e) {
+    if (e.key !== 'Escape' && e.key !== 'Enter') return false
+    this.close()
+    return true
+  }
+  draw(g, u) {
+    const o = this.owner, sv = this.square, hue = this.strip, names = this.names
+    // Across: from white to the hue at its strongest. Down: to black.
+    g.save()
+    rounded(g, sv.x, sv.y, sv.w, sv.h, 6 * u)
+    g.clip()
+    const across = g.createLinearGradient(sv.x, 0, sv.x + sv.w, 0)
+    across.addColorStop(0, '#fff')
+    across.addColorStop(1, hexOf(rgbFrom(o.hue, 1, 1)))
+    g.fillStyle = across
+    g.fillRect(sv.x, sv.y, sv.w, sv.h)
+    const down = g.createLinearGradient(0, sv.y, 0, sv.y + sv.h)
+    down.addColorStop(0, 'rgba(0, 0, 0, 0)')
+    down.addColorStop(1, '#000')
+    g.fillStyle = down
+    g.fillRect(sv.x, sv.y, sv.w, sv.h)
+    g.restore()
+    const mark = (x, y, r, fill) => {
+      g.beginPath(); g.arc(x, y, r, 0, TAU)
+      g.fillStyle = fill
+      g.fill()
+      g.strokeStyle = '#fff'
+      g.lineWidth = 2.5 * u
+      g.stroke()
+      g.strokeStyle = 'rgba(0, 0, 0, 0.45)'
+      g.lineWidth = 1
+      g.beginPath(); g.arc(x, y, r + 1.75 * u, 0, TAU); g.stroke()
+    }
+    mark(clamp(sv.x + sv.w * o.strong, sv.x + 8 * u, sv.x + sv.w - 8 * u), clamp(sv.y + sv.h * (1 - o.bright), sv.y + 8 * u, sv.y + sv.h - 8 * u), 8 * u, hexOf(rgbFrom(o.hue, o.strong, o.bright)))
+    const hues = g.createLinearGradient(hue.x, 0, hue.x + hue.w, 0)
+    for (let i = 0; i <= 6; i++) hues.addColorStop(i / 6, hexOf(rgbFrom(i * 60 % 360, 1, 1)))
+    rounded(g, hue.x, hue.y + 4 * u, hue.w, hue.h - 8 * u, 7 * u)
+    g.fillStyle = hues
+    g.fill()
+    mark(clamp(hue.x + hue.w * o.hue / 360, hue.x + 9 * u, hue.x + hue.w - 9 * u), hue.y + hue.h / 2, 9 * u, hexOf(rgbFrom(o.hue, 1, 1)))
+    o.colours.forEach((name, i) => {
+      const cx = names.x + (i % 8 + 0.5) * names.each, cy = names.y + (Math.floor(i / 8) + 0.5) * names.h, on = o.v === name
+      g.beginPath(); g.arc(cx, cy, 10.5 * u, 0, TAU)
+      g.fillStyle = name
+      g.fill()
+      g.strokeStyle = on ? THEME.text : THEME.edge
+      g.lineWidth = (on ? 2.25 : 1) * u
+      g.stroke()
+    })
+  }
+}
+
+/**
+ * THE COLOUR PICKER: a patch of the colour chosen. A tap opens a picker over the controls: drag in
+ * the square for how strong and how bright, along the strip for the hue, or tap one of the named
+ * colours. `ink.value` is the colour as a scene writes one ("tomato", "#3a7bd5"), so it goes
+ * straight into a drawing call: circle(x, y, 40, ink.value).
+ */
+class ColourPicker extends Control {
+  constructor(panel, kind, spec) {
+    super(panel, kind, spec)
+    let now = spec.value
+    if (spec.target) {
+      this.target = spec.target
+      this.param = spec.param
+      const d = describe(spec.target, spec.param)
+      if (!this.label) this.label = d.label ?? d.name ?? String(spec.param)
+      now ??= readTarget(this.target, this.param) ?? d.default
+    }
+    this.colours = spec.colours === false ? [] : Array.isArray(spec.colours) ? [...spec.colours] : NAMED
+    this.keep(now == null ? 'tomato' : String(now))
+    this.default = this.v
+    if (spec.value != null && this.target) writeTarget(this.target, this.param, this.v)
+  }
+  /** Keep a colour, and where it is in the picker. */
+  keep(colour) {
+    this.v = colour
+    this.rgb = rgbOf(colour)
+    const [hue, strong, bright] = hsvOf(this.rgb)
+    // Grey has no hue, and black no strength: the picker stays where it was rather than jump to red.
+    this.hue = strong && bright ? hue : this.hue ?? hue
+    this.strong = bright ? strong : this.strong ?? strong
+    this.bright = bright
+  }
+  get value() { return this.v }
+  set value(colour) {
+    colour = String(colour)
+    if (colour === this.v) return
+    this.keep(colour)
+    if (this.target) writeTarget(this.target, this.param, colour)
+    this.touch()
+    if (this.open) this.picker.touch()
+  }
+  toString() { return this.v }
+  /** A colour chosen by hand. */
+  take(colour) {
+    if (colour === this.v) return
+    this.keep(colour)
+    this.changed(colour)
+  }
+  /** A colour mixed in the picker: a hue, how strong and how bright. */
+  mix(hue, strong, bright) {
+    const colour = hexOf(rgbFrom(hue, strong, bright))
+    this.hue = hue; this.strong = strong; this.bright = bright
+    if (colour === this.v) return
+    this.v = colour
+    this.rgb = rgbOf(colour)
+    this.changed(colour)
+  }
+  get open() { return !!this.picker && this.picker.shown }
+  set open(on) { if (on) this.show(); else if (this.picker) this.picker.close() }
+  show() { this.picker = new ColourPopup(this.panel, this).open() }
+  natural(u, room, g) {
+    g.font = `${12 * u}px ${THEME.font}`
+    return [Math.max(84 * u, g.measureText(this.label).width + 16 * u), 62 * u]
+  }
+  field(u) { return { x: this.x + 6 * u, y: this.y + 25 * u, w: this.w - 12 * u, h: 30 * u } }
+  down(p) { this.from = { x: p.x, y: p.y }; this.touch() }
+  up(p) { if (tapped(this, p)) this.show(); this.touch() }
+  keyDown(e) {
+    if (this.open) return this.panel.focus === this && this.picker.keyDown(e)
+    return keysOf(this, e, { Enter: () => this.show(), Space: () => this.show() })
+  }
+  frame() {
+    if (!this.target || this.held || this.open) return
+    const there = readTarget(this.target, this.param)
+    if (there != null && String(there) !== this.v) { this.keep(String(there)); this.touch() }
+  }
+  draw(g, u) {
+    const f = this.field(u)
+    words(g, this.label, this.x + this.w / 2, this.y + 13 * u, 12 * u, THEME.dim, 'center', '', this.w - 6 * u)
+    rounded(g, f.x, f.y, f.w, f.h, 8 * u)
+    g.fillStyle = THEME.knob
+    g.fill()
+    rounded(g, f.x + 4 * u, f.y + 4 * u, f.w - 8 * u, f.h - 8 * u, 5 * u)
+    g.fillStyle = this.v
+    g.fill()
+    g.strokeStyle = this.held || this.open ? THEME.text : 'rgba(255, 255, 255, 0.18)'
+    g.lineWidth = (this.held || this.open ? 1.5 : 1) * u
+    g.stroke()
+    ring(g, this, f.x, f.y, f.w, f.h, 8 * u, u)
+  }
+}
+
+// --- things that only show
+/** A source for a control that shows something: a function that is asked, a setting of a target, or nothing. */
+function pulled(spec, ...asks) {
+  if (typeof spec.source === 'function') return spec.source
+  if (spec.target && spec.param != null) return () => readTarget(spec.target, spec.param)
+  return method(spec.source, ...asks)
+}
+
+/** A BAR THAT FILLS as something gets done: `loading.value = 0.4`, or from 0 to `max`. */
+class Progress extends Control {
+  constructor(panel, kind, spec) {
+    super(panel, kind, spec)
+    this.pull = pulled(spec, 'progress', 'level')
+    this.min = spec.min ?? 0
+    this.max = spec.max ?? 1
+    this.percent = spec.percent !== false
+    this.v = Number(this.pull ? this.pull() : spec.value ?? this.min) || 0
+    this.drawn = null
+  }
+  get value() { return this.v }
+  set value(value) { this.v = Number(value) || 0 }
+  /** How much is done, from 0 to 1. */
+  get done() { return this.max === this.min ? 0 : clamp((this.v - this.min) / (this.max - this.min), 0, 1) }
+  scaleOf() { return 1 }
+  natural(u) { return [(this.wide || sized(this.size, 110, 160, 240)) * u, (this.label || this.percent ? 46 : 28) * u] }
+  stretch() { return this.wide ? [1, 1] : [0.7, 2.5] }
+  frame() {
+    if (this.pull) this.value = this.pull()
+    const now = Math.round(this.done * 1000)
+    if (now !== this.drawn) { this.drawn = now; this.touch() }
+  }
+  draw(g, u) {
+    const done = this.done, x = this.x + 10 * u, w = this.w - 20 * u, top = this.label || this.percent, cy = this.y + (top ? 32 : 14) * u, thick = 8 * u
+    if (this.label) words(g, this.label, x, this.y + 14 * u, 12 * u, THEME.dim, 'left', '', w * 0.7)
+    if (this.percent) words(g, `${Math.round(done * 100)}%`, x + w, this.y + 14 * u, 12 * u, THEME.text, 'right')
+    rounded(g, x, cy - thick / 2, w, thick, thick / 2)
+    g.fillStyle = THEME.track
+    g.fill()
+    if (done <= 0) return
+    rounded(g, x, cy - thick / 2, Math.max(thick, w * done), thick, thick / 2)
+    g.fillStyle = done >= 1 ? THEME.good : this.accent
+    g.fill()
+  }
+}
+
+/**
+ * A LIGHT: on or off, a brightness from 0 to 1, or a colour. `ready.on = true`,
+ * `light("signal", lead)` (as bright as the target is loud), `status.value = "red"`.
+ */
+class Light extends Control {
+  constructor(panel, kind, spec) {
+    super(panel, kind, spec)
+    this.pull = pulled(spec, 'level')
+    this.v = this.pull ? this.pull() : spec.value ?? false
+    this.said = null
+  }
+  get value() { return this.v }
+  set value(value) { this.v = value }
+  get on() { return this.bright > 0 }
+  set on(on) { this.v = !!on }
+  /** How bright it is, from 0 to 1: a level makes it so bright, and true or a colour is fully on. */
+  get bright() {
+    let v = this.v
+    if (isList(v)) v = Math.max(...v)
+    return typeof v === 'number' ? clamp(v, 0, 1) : v && v !== 'off' ? 1 : 0
+  }
+  /** The colour it shines: the one it was told, or its own. */
+  get shine() { return typeof this.v === 'string' && this.v !== 'off' && this.v !== 'on' ? this.v : this.accent }
+  scaleOf() { return 1 }
+  get lamp() { return sized(this.size, 12, 18, 28) }
+  natural(u, room, g) {
+    g.font = `${12 * u}px ${THEME.font}`
+    return [Math.max(44 * u, (this.label ? g.measureText(this.label).width : 0) + 16 * u), ((this.label ? 25 : 8) + this.lamp + 16) * u]
+  }
+  frame() {
+    if (this.pull) this.v = this.pull()
+    const now = `${Math.round(this.bright * 50)} ${this.shine}`
+    if (now !== this.said) { this.said = now; this.touch() }
+  }
+  draw(g, u) {
+    const r = this.lamp * u / 2, cx = this.x + this.w / 2, cy = this.y + (this.label ? 25 : 8) * u + (this.h - (this.label ? 32 : 16) * u) / 2, bright = this.bright
+    if (this.label) words(g, this.label, cx, this.y + 13 * u, 12 * u, THEME.dim, 'center', '', this.w - 6 * u)
+    if (bright > 0) {
+      // Its glow, which reaches a little way past the lamp.
+      const glow = g.createRadialGradient(cx, cy, r * 0.6, cx, cy, r + 7 * u)
+      glow.addColorStop(0, this.shine)
+      glow.addColorStop(1, 'rgba(0, 0, 0, 0)')
+      g.globalAlpha = 0.55 * bright
+      g.fillStyle = glow
+      g.beginPath(); g.arc(cx, cy, r + 7 * u, 0, TAU); g.fill()
+      g.globalAlpha = 1
+    }
+    g.beginPath(); g.arc(cx, cy, r, 0, TAU)
+    g.fillStyle = THEME.well
+    g.fill()
+    g.globalAlpha = bright
+    g.fillStyle = this.shine
+    g.fill()
+    g.globalAlpha = 1
+    g.strokeStyle = bright > 0 ? 'rgba(255, 255, 255, 0.35)' : THEME.track
+    g.lineWidth = 1.5 * u
+    g.stroke()
+    // A small bright spot, as on a lamp behind glass.
+    g.fillStyle = `rgba(255, 255, 255, ${0.12 + 0.5 * bright})`
+    g.beginPath(); g.arc(cx - r * 0.3, cy - r * 0.32, r * 0.24, 0, TAU); g.fill()
+  }
+}
+
+/** SOMETHING IS HAPPENING: a ring that goes round while `busy.on` is true, and is still when it is not. */
+class Busy extends Control {
+  constructor(panel, kind, spec) {
+    super(panel, kind, spec)
+    this.pull = pulled(spec)
+    this.v = this.pull ? !!this.pull() : spec.value !== false
+  }
+  get value() { return this.v }
+  set value(on) { this.v = !!on; this.touch() }
+  get on() { return this.v }
+  set on(on) { this.value = on }
+  scaleOf() { return 1 }
+  get round() { return sized(this.size, 18, 26, 40) }
+  natural(u, room, g) {
+    g.font = `${12 * u}px ${THEME.font}`
+    return [Math.max(44 * u, (this.label ? g.measureText(this.label).width : 0) + 16 * u), ((this.label ? 25 : 8) + this.round + 12) * u]
+  }
+  frame() {
+    if (this.pull) { const on = !!this.pull(); if (on !== this.v) this.value = on }
+    if (this.v) this.touch()
+  }
+  draw(g, u) {
+    const r = this.round * u / 2 - 2 * u, cx = this.x + this.w / 2, cy = this.y + (this.label ? 25 : 8) * u + (this.h - (this.label ? 32 : 16) * u) / 2
+    if (this.label) words(g, this.label, cx, this.y + 13 * u, 12 * u, THEME.dim, 'center', '', this.w - 6 * u)
+    g.lineWidth = 3.5 * u
+    g.lineCap = 'round'
+    g.strokeStyle = THEME.track
+    g.beginPath(); g.arc(cx, cy, r, 0, TAU); g.stroke()
+    if (!this.v) return
+    // Someone who asked for less movement is shown a ring that is lit and still.
+    const a = stillness() ? -TAU / 4 : performance.now() / 1000 * TAU * 0.9
+    g.strokeStyle = this.accent
+    g.beginPath(); g.arc(cx, cy, r, a, a + TAU * 0.3); g.stroke()
+  }
+}
+
+// --- sliders of other kinds
+/**
+ * A SLIDER WITH TWO HANDLES: a low end and a high end, for a range (a price from 20 to 80, the
+ * part of a sound to play). `span.low` and `span.high` are the numbers and `span.value` is both.
+ * The handle nearer the finger is the one moved, and neither goes past the other.
+ */
+class RangeSlider extends Slider {
+  constructor(panel, kind, spec) {
+    const { target, param, paramHigh, value, ...rest } = spec
+    super(panel, kind, rest)
+    const pair = Array.isArray(value) ? value : []
+    const end = (name, at, fallback) => {
+      if (target && name != null) {
+        const there = at ?? readTarget(target, name)
+        if (at != null) writeTarget(target, name, this.clean(at))
+        return this.clean(typeof there === 'number' ? there : fallback)
+      }
+      return this.clean(at ?? fallback)
+    }
+    if (target) {
+      // The range is the low setting's: both ends are in the same measure.
+      const d = describe(target, param)
+      this.min = rest.min ?? d.min ?? 0
+      this.max = rest.max ?? d.max ?? 1
+      this.step = rest.step ?? d.step ?? 0
+      this.unit = unitOf(rest.unit ?? d.unit ?? '')
+      this.log = this.min > 0 && this.max > this.min && (rest.log ?? d.log ?? (this.unit === 'Hz' && this.max / this.min >= 100))
+      this.target = target
+      this.param = param
+      this.pair = [param, paramHigh]
+    }
+    this.lo = end(param, pair[0], this.min)
+    this.hi = Math.max(this.lo, end(paramHigh, pair[1], this.max))
+    this.default = [this.lo, this.hi]
+    this.which = 1 // the handle moved last: 0 the low one, 1 the high one
+  }
+  get low() { return this.lo }
+  set low(value) { this.put(0, Math.min(this.clean(value), this.hi)) }
+  get high() { return this.hi }
+  set high(value) { this.put(1, Math.max(this.clean(value), this.lo)) }
+  get value() { return [this.lo, this.hi] }
+  set value(pair) { this.low = Math.min(pair[0], pair[1]); this.high = Math.max(pair[0], pair[1]); this.low = Math.min(pair[0], pair[1]) }
+  get v() { return this.value }
+  set v(value) {}
+  /** Set one end from the scene's code: the target is told. */
+  put(which, value) {
+    if (value === (which ? this.hi : this.lo)) return false
+    if (which) this.hi = value; else this.lo = value
+    if (this.target && this.pair[which] != null) writeTarget(this.target, this.pair[which], value)
+    this.touch()
+    return true
+  }
+  /** Move one end by hand to a place from 0 to 1 along the track, no further than the other end. */
+  slideEnd(which, pos) {
+    let value = this.clean(this.fromPos(clamp(pos, 0, 1)))
+    value = which ? Math.max(value, this.lo) : Math.min(value, this.hi)
+    if (!this.put(which, value)) return
+    if (this.onChange) this.onChange(this.lo, this.hi, this)
+    this.panel.told.push(this.id, this.value)
+  }
+  reset() { this.slideEnd(0, this.toPos(Math.min(this.default[0], this.hi))); this.slideEnd(1, this.toPos(this.default[1])); this.slideEnd(0, this.toPos(this.default[0])) }
+  down(p) {
+    const here = this.along(p, this.u), a = this.toPos(this.lo), b = this.toPos(this.hi)
+    // The nearer handle; where both are at one place, the one that can go the way the finger is.
+    this.which = a === b ? (here > a ? 1 : 0) : Math.abs(here - a) <= Math.abs(here - b) ? 0 : 1
+    this.grip = this.which ? b : a
+    if (Math.abs(here - this.grip) * this.track(this.u).long > 22 * this.u) { this.grip = clamp(here, 0, 1); this.slideEnd(this.which, this.grip) }
+    this.last = { x: p.x, y: p.y }
+    this.touch()
+  }
+  move(p) {
+    const travel = this.vertical ? this.last.y - p.y : p.x - this.last.x
+    this.last.x = p.x; this.last.y = p.y
+    this.grip = clamp(this.grip + travel / this.track(this.u).long * (p.shift ? 0.1 : 1), 0, 1)
+    this.slideEnd(this.which, this.grip)
+  }
+  up() { this.touch() }
+  keyDown(e) {
+    const by = (n) => (fine) => this.slideEnd(this.which, this.toPos(this.which ? this.hi : this.lo) + n * (this.step ? this.step / Math.abs(this.max - this.min || 1) : fine ? 0.002 : 0.02))
+    return keysOf(this, e, { ArrowRight: by(1), ArrowUp: by(1), ArrowLeft: by(-1), ArrowDown: by(-1) })
+  }
+  frame() {
+    if (!this.target || this.held) return
+    this.pair.forEach((name, which) => {
+      const now = name == null ? undefined : readTarget(this.target, name)
+      if (typeof now !== 'number' || Math.abs(now - (which ? this.hi : this.lo)) <= Math.abs(this.max - this.min) * 1e-6) return
+      if (which) this.hi = now; else this.lo = now
+      this.touch()
+    })
+  }
+  draw(g, u) {
+    const t = this.track(u), a = this.toPos(this.lo), b = this.toPos(this.hi), said = `${shown(this.lo, this)} to ${shown(this.hi, this)}`
+    g.lineCap = 'round'
+    g.lineWidth = 6 * u
+    const at = (pos) => (this.vertical ? [this.x + this.w / 2, t.from - t.long * pos] : [t.from + t.long * pos, this.y + this.h - 18 * u])
+    if (this.vertical) {
+      words(g, this.label, this.x + this.w / 2, this.y + 12 * u, 12 * u, THEME.dim, 'center', '', this.w - 4 * u)
+      words(g, said, this.x + this.w / 2, this.y + this.h - 11 * u, 11 * u, THEME.text, 'center', '', this.w - 4 * u)
+    } else {
+      words(g, this.label, this.x + 14 * u, this.y + 14 * u, 12 * u, THEME.dim, 'left', '', this.w * 0.45)
+      words(g, said, this.x + this.w - 14 * u, this.y + 14 * u, 12 * u, THEME.text, 'right', '', this.w * 0.5)
+    }
+    g.strokeStyle = THEME.track
+    g.beginPath(); g.moveTo(...at(0)); g.lineTo(...at(1)); g.stroke()
+    g.strokeStyle = this.accent
+    g.beginPath(); g.moveTo(...at(a)); g.lineTo(...at(b)); g.stroke()
+    for (const which of [0, 1]) {
+      const [hx, hy] = at(which ? b : a), on = this.held && this.which === which
+      g.fillStyle = THEME.text
+      g.beginPath(); g.arc(hx, hy, (on ? 10 : 8.5) * u, 0, TAU); g.fill()
+      if (this.panel.focus === this && this.panel.keyed && this.which === which) { g.strokeStyle = this.accent; g.lineWidth = 2 * u; g.stroke(); g.lineWidth = 6 * u }
+    }
+  }
+}
+
+/** A FADER: an upright slider with the look of a mixing desk's, a cap that slides in a slot beside a scale. It is a slider in every other way. */
+class Fader extends Slider {
+  constructor(panel, kind, spec) {
+    super(panel, kind, spec)
+    this.vertical = true
+  }
+  natural(u) { return [58 * u, (sized(this.size, 100, 140, 190) + 56) * u] }
+  draw(g, u) {
+    const t = this.track(u), pos = this.toPos(this.v), cx = this.x + this.w / 2, y = t.from - t.long * pos
+    words(g, this.label, cx, this.y + 12 * u, 12 * u, THEME.dim, 'center', '', this.w - 4 * u)
+    // The scale: a mark at each tenth, longer at the ends and the middle.
+    g.strokeStyle = THEME.track
+    g.lineWidth = 1 * u
+    g.beginPath()
+    for (let i = 0; i <= 10; i++) {
+      const my = t.from - t.long * i / 10, long = (i % 5 ? 4 : 7) * u
+      g.moveTo(cx - 15 * u - long, my); g.lineTo(cx - 15 * u, my)
+      g.moveTo(cx + 15 * u, my); g.lineTo(cx + 15 * u + long, my)
+    }
+    g.stroke()
+    rounded(g, cx - 3 * u, t.from - t.long - 3 * u, 6 * u, t.long + 6 * u, 3 * u)
+    g.fillStyle = THEME.well
+    g.fill()
+    const zero = this.min < 0 && this.max > 0 ? this.toPos(0) : 0
+    g.lineCap = 'round'
+    g.lineWidth = 2.5 * u
+    g.strokeStyle = this.accent
+    g.beginPath(); g.moveTo(cx, t.from - t.long * zero); g.lineTo(cx, y); g.stroke()
+    // The cap, with a line across it where it reads.
+    const cw = 30 * u, ch = 18 * u
+    rounded(g, cx - cw / 2, y - ch / 2, cw, ch, 4 * u)
+    g.fillStyle = this.held ? THEME.text : THEME.dim
+    g.fill()
+    g.strokeStyle = THEME.well
+    g.lineWidth = 1
+    g.stroke()
+    g.strokeStyle = this.accent
+    g.lineWidth = 2.5 * u
+    g.beginPath(); g.moveTo(cx - cw / 2 + 4 * u, y); g.lineTo(cx + cw / 2 - 4 * u, y); g.stroke()
+    words(g, shown(this.v, this), cx, this.y + this.h - 11 * u, 12 * u, THEME.text, 'center', '', this.w - 4 * u)
+  }
+}
+
+Object.assign(KINDS, { number: NumberBox, textBox: TextBox, readout: Readout, checkbox: Checkbox, choose: Choose, radio: Radio, dropdown: Dropdown,
+  xyPad: XYPad, colourPicker: ColourPicker, progress: Progress, light: Light, busy: Busy, rangeSlider: RangeSlider, fader: Fader })
+for (const kind of ['readout', 'progress', 'light', 'busy']) SLIDES.add(kind)
 
 /** A text box: (label, text, options) or (label, target, "setting", options). A function anywhere is its onChange. */
 function texted(args) {
@@ -3414,13 +4089,38 @@ function shownFrom(args) {
   if (typeof label !== 'string') { [a, b, c] = [label, a, b]; label = undefined }
   if (typeof a === 'function') return { ...b, label, source: a }
   if (isTarget(a) && typeof b === 'string') return { ...c, label, target: a, param: b }
+  if (method(a, 'level', 'samples', 'progress')) return { ...b, label, source: a }
   if (isPlain(a)) return { ...a, label }
   return { ...b, label, value: a }
 }
 
+/** An XY pad: (label, target, "across", "up", options), (label, [min, max, start], [min, max, start], options) or (label, options). */
+function padded(args) {
+  let [label, a, b, c, d] = args
+  if (typeof label !== 'string') { [a, b, c, d] = [label, a, b, c]; label = undefined }
+  let spec
+  if (Array.isArray(a)) spec = { ...(Array.isArray(b) ? c : b), across: a, up: Array.isArray(b) ? b : a }
+  else if (isTarget(a) && typeof b === 'string') spec = { ...d, target: a, paramX: b, paramY: c }
+  else spec = { ...a }
+  if (label !== undefined) spec.label = label
+  return spec
+}
+/** A slider with two handles: (label, min, max, [low, high], options) or (label, target, "low setting", "high setting", options). */
+function spanned(args) {
+  let [label, a, b, c, d] = args
+  if (typeof label !== 'string') { [a, b, c, d] = [label, a, b, c]; label = undefined }
+  let spec
+  if (typeof a === 'number') spec = Array.isArray(c) ? { ...d, min: a, max: b, value: c } : { ...c, min: a, max: b }
+  else if (isTarget(a) && typeof b === 'string') spec = { ...d, target: a, param: b, paramHigh: c }
+  else spec = { ...a }
+  if (label !== undefined) spec.label = label
+  return spec
+}
+
 /** The functions a scene calls for the controls of this part. */
 function more(panel) {
-  const make = (kind, read) => (...args) => panel.add(kind, read(args))
+  // A control whose numbers are called x and y gives the scene what stands for it (see standIn).
+  const make = (kind, read) => (...args) => { const item = panel.add(kind, read(args)); return item.face || item }
   return {
     /** A number with − and + at its sides, which can be typed: number("lives", 0, 9, 3) or number("voices", lead, "voices"). */
     number: make('number', ranged),
@@ -3437,6 +4137,21 @@ function more(panel) {
     radio: make('radio', selected),
     /** One of a long list, which opens over the controls: dropdown("country", countries, "Peru"). */
     dropdown: make('dropdown', selected),
+    /** A square where a finger sets two numbers at once: xyPad("filter", lead, "cutoff", "resonance"), or xyPad("spot", [0, 100], [0, 50]); then pad.x and pad.y. */
+    xyPad: make('xyPad', padded),
+    /** A patch of colour that opens a picker: ink = colourPicker("ink", "tomato"), then circle(x, y, 40, ink.value). */
+    colourPicker: make('colourPicker', texted),
+    colorPicker: make('colourPicker', texted),
+    /** A bar that fills: progress("loading", () => done / all), or bar.value = 0.4. Options: min, max, percent: false. */
+    progress: make('progress', shownFrom),
+    /** A light: light("ready", true), light("signal", lead) (as bright as it is loud), or lamp.value = "red". */
+    light: make('light', shownFrom),
+    /** A ring that goes round while something is happening: busy("loading"), then wait.on = false. */
+    busy: make('busy', shownFrom),
+    /** A slider with a low and a high handle: rangeSlider("price", 0, 100, [20, 80]), then span.low and span.high. */
+    rangeSlider: make('rangeSlider', spanned),
+    /** An upright slider with the look of a mixing desk's: fader("volume", lead, "volume"). */
+    fader: make('fader', ranged),
   }
 }
 
@@ -3649,6 +4364,14 @@ const checkbox = (...args) => dials().checkbox(...args)
 const choose = (...args) => dials().choose(...args)
 const radio = (...args) => dials().radio(...args)
 const dropdown = (...args) => dials().dropdown(...args)
+const xyPad = (...args) => dials().xyPad(...args)
+const colourPicker = (...args) => dials().colourPicker(...args)
+const colorPicker = colourPicker
+const progress = (...args) => dials().progress(...args)
+const light = (...args) => dials().light(...args)
+const busy = (...args) => dials().busy(...args)
+const rangeSlider = (...args) => dials().rangeSlider(...args)
+const fader = (...args) => dials().fader(...args)
 
 export { dials, dial, slider, button, toggle, select, rotary, keyboard, scope, meter, label, group, row, column, grid, page, spacer, wrap, layout, room, over, theme, version,
-  number, stepper, textBox, readout, checkbox, choose, radio, dropdown }
+  number, stepper, textBox, readout, checkbox, choose, radio, dropdown, xyPad, colourPicker, colorPicker, progress, light, busy, rangeSlider, fader }
