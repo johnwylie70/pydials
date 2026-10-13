@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Moving the plates is what a panel does when there is more than fits: they carry on a little when a finger lets go, and a finger going up or down a slider that lies across moves the plates.
+- `layout(fit="width")` fills the width whichever way: rows as written, drawn smaller to fit or bigger where there is room, no bigger than `max_scale=` (1.6).
+- A target in the page that says its choices or its range changed (`onChange`) has its control ask again, and Python is told the new choices and range.
 - `rotary("mode", ["room", "hall", "plate", "spring"], "hall")`, or `rotary("wave", lead, "wave")`: a knob that clicks between a few choices, with a notch for each and their names round it where there is room. `select(…, style="rotary")` is the same.
 - The piano keys slide to a new octave (the arrows, Z and X, an arrow held down, or a finger dragging the strip above the keys). `keyboard(lead, animate=False)` makes them jump.
 - Wrapping is yours to say: `layout(wrap=False)` keeps every row as written and draws the whole panel at one scale that fits the widest to the width (not below `min_scale=`); `layout(wrap=True)` makes every `row()` a new line; `layout(columns=3)`, or `columns={"phone": 1, "tablet": 2, "wide": 3}`; `with group("shape", wrap=False):` never splits; `with row(wrap=False):` keeps the groups in it side by side; `wrap()` marks where a line may be split.

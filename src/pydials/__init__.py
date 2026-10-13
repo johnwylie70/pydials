@@ -1024,6 +1024,7 @@ def layout(**options):
     wrap=False              every row stays one row; everything is drawn smaller until the widest fits the width
     wrap=True               every row() is a new line, and a row is split only when it does not fit
     min_scale=0.8           told not to wrap, no smaller than this: wider rows are moved from side to side
+    fit="width"             as wrap=False, and drawn bigger too where there is room, no bigger than max_scale= (1.6)
     columns=3               so many plates to a line; or by width: columns={"phone": 1, "tablet": 2, "wide": 3}
     size=(800, 480)         the panel is laid out at this size on every screen, then made to fit the picture whole;
                             size=800 is a width alone (as is fit="width"): what does not fit is moved up and down
@@ -1037,8 +1038,9 @@ def layout(**options):
     api = _page()
     if "on_resize" in options:
         _run.on_resize = options.pop("on_resize")
-    if "min_scale" in options:
-        options["minScale"] = options.pop("min_scale")
+    for name, theirs in (("min_scale", "minScale"), ("max_scale", "maxScale")):
+        if name in options:
+            options[theirs] = options.pop(name)
     for name in ("size", "design"):
         if isinstance(options.get(name), tuple):
             options[name] = list(options[name])

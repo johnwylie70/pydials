@@ -126,7 +126,7 @@ The scenes in `examples/` use a small stand-in synth (`examples/standin_synth.py
 
 ## Laying it out
 
-**There is nothing to do.** Controls line up in the order you make them, on a plate, with the keyboard along the bottom. On a narrow screen the line wraps evenly (six dials are three and three, never five and one), on a touch screen everything is a little bigger, and when the picture changes size it is all laid out again. Controls are drawn a little smaller before a line has to wrap, but never tiny: when there is more than fits, the plates can be moved with a finger, the mouse wheel or the bar beside them, while the keyboard and the scope above it stay where they are. On a phone on its side, where there is very little height, the scope is put away and the keyboard keeps to its share.
+**There is nothing to do.** Controls line up in the order you make them, on a plate, with the keyboard along the bottom. On a narrow screen the line wraps evenly (six dials are three and three, never five and one), on a touch screen everything is a little bigger, and when the picture changes size it is all laid out again. Controls are drawn a little smaller before a line has to wrap, but never tiny: when there is more than fits, the plates can be moved: with a finger (they carry on a little when it lets go), the mouse wheel, a trackpad or the thin bar beside them, while the keyboard and the scope above it stay where they are. A drag that starts on a dial turns the dial; one that starts on a plate's title, on words or between the plates moves them, passing over dials without turning any; and on a slider that lies across, a finger going along it moves the slider and one going up or down moves the plates. On a phone on its side, where there is very little height, the scope is put away and the keyboard keeps to its share.
 
 **A label is a heading.** A `label` made just before some controls is the title of their plate, and they are kept together: a plate moves to the next line whole, never leaving its heading behind. Plates with titles fill the width: they stand side by side, as many to a line as fit, every line reaching both edges, and `row()` says where a line should end when one has to. This is a whole synth panel, and it needs nothing else:
 
@@ -204,6 +204,8 @@ label("reverb"); dial("reverb", lead, "reverb"); dial("size", lead, "reverb_size
 scope(lead)
 keyboard(lead)
 ```
+
+`layout(fit="width")` is the same, and also draws the panel bigger where there is room to spare, so that the widest row reaches both edges: no bigger than `max_scale=` (1.6 unless you say), and no bigger than still fits the height.
 
 Under a finger the panel is not drawn smaller than eight tenths of its size, which is as small as is comfortable to touch (with a mouse, half). If the rows are still too wide they are left that size and moved from side to side. You choose the floor: `layout(wrap=False, min_scale=1)` never shrinks at all, and `min_scale=0` shrinks as far as it takes.
 
@@ -346,7 +348,7 @@ All of them take `x=` and `y=` (to place it by hand: its top left corner) and `c
 | `meter(source)` | A level from 0 to 1 as a bar of lights: a target with `level()`, a function, or `level.value = 0.7`. |
 | `label(text)` | Words. Made just before some controls, it is their heading. |
 | `group`, `row`, `column`, `grid`, `page`, `spacer`, `wrap` | What goes with what: see [Laying it out](#laying-it-out). |
-| `layout(at="bottom")` | Where the plates go (`"top"`, `"bottom"`, `"left"`, `"right"`), `scale=`, `wrap=`, `min_scale=`, `columns=`, `size=`, `margin=`, `compact=`, `dividers=`, `plates=`, `align=`, `backdrop=` (True, False or a colour), `image=` and `on_resize=`. It gives back the picture's `width` and `height` and the `scale`. |
+| `layout(at="bottom")` | Where the plates go (`"top"`, `"bottom"`, `"left"`, `"right"`), `scale=`, `wrap=`, `fit=`, `min_scale=`, `max_scale=`, `columns=`, `size=`, `margin=`, `compact=`, `dividers=`, `plates=`, `align=`, `backdrop=` (True, False or a colour), `image=` and `on_resize=`. It gives back the picture's `width` and `height` and the `scale`. |
 | `room()` | The rectangle no control is on: its `x`, `y`, `width` and `height`. |
 | `theme(accent="deepskyblue")` | The colours. |
 

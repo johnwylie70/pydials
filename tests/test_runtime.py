@@ -346,6 +346,7 @@ def test_wrapping_columns_a_set_size_and_marks_are_said_to_the_page_in_its_own_s
     r = start("""
         from pydials import *
         layout(wrap=False, min_scale=0.8)
+        layout(fit="width", max_scale=1.3)
         layout(columns={"phone": 1, "wide": 3}, size=(800, 480), scale=1.2)
         with group("shape", wrap=False):
             dial("a", 0, 1, size=1.5)
@@ -356,7 +357,7 @@ def test_wrapping_columns_a_set_size_and_marks_are_said_to_the_page_in_its_own_s
         keyboard(animate=False)
     """)
     assert r["error"] is None
-    assert sent(r, "layout") == [[{"$d": {"wrap": False, "minScale": 0.8}}], [{"$d": {"columns": {"$d": {"phone": 1, "wide": 3}}, "size": [800, 480], "scale": 1.2}}]]
+    assert sent(r, "layout") == [[{"$d": {"wrap": False, "minScale": 0.8}}], [{"$d": {"fit": "width", "maxScale": 1.3}}], [{"$d": {"columns": {"$d": {"phone": 1, "wide": 3}}, "size": [800, 480], "scale": 1.2}}]]
     specs = {m[1]: (m[0], m[2]) for m in made(r)}
     assert specs[1] == ("group", {"wrap": False, "label": "shape"})
     assert specs[2][1]["size"] == 1.5 and specs[3] == ("row", {"soft": True}) and specs[5] == ("row", {"wrap": False})
