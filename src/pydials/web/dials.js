@@ -995,11 +995,13 @@ class Box {
 const isBreak = (node) => node.kind === 'row' && !!node.items && !node.entered
 
 /**
- * Cut a run of things into lines no wider than `limit`. As few lines as will do, and then the widest of
- * them as narrow as it can be, so six dials that do not fit are 3 + 3 and never 5 + 1. A line is counted
- * as fitting when it would with everything in it made as narrow as it goes (`m.min`).
+ * Cut a run of things into lines no wider than `limit`. As few lines as will do; then the widest of them
+ * as narrow as it can be, so six dials that do not fit are 3 + 3 and never 5 + 1; then, of ways about as
+ * good, one that ends its lines where the scene's code did (`ends`: the places a row() was written), and
+ * the most even. A line is counted as fitting when it would with everything in it made as narrow as it
+ * goes (`m.min`).
  */
-function wrapLines(kids, limit, between) {
+function wrapLines(kids, limit, between, ends) {
   const n = kids.length
   const span = (i, j, key) => {
     let sum = 0
@@ -1010,16 +1012,20 @@ function wrapLines(kids, limit, between) {
   for (let from = 0, j = 2; j <= n; j++) if (span(from, j, 'min') > limit + 0.5) { count++; from = j - 1 }
   let cuts = [0, n]
   if (count > 1) {
-    const best = Array.from({ length: count + 1 }, () => new Array(n + 1).fill(Infinity))
+    // Widths are compared in steps of a twentieth of the room: a few points either way are not worth an odd break.
+    const step = Math.max(1, limit / 20)
+    const better = (a, b) => !b || (a[0] !== b[0] ? a[0] < b[0] : a[1] !== b[1] ? a[1] < b[1] : a[2] <= b[2])
+    const best = Array.from({ length: count + 1 }, () => new Array(n + 1).fill(null))
     const back = Array.from({ length: count + 1 }, () => new Array(n + 1).fill(0))
-    best[0][0] = 0
+    best[0][0] = [0, 0, 0]
     for (let l = 1; l <= count; l++) {
       for (let j = l; j <= n; j++) {
         for (let i = l - 1; i < j; i++) {
-          if (best[l - 1][i] === Infinity || (j - i > 1 && span(i, j, 'min') > limit + 0.5)) continue
-          const worst = Math.max(best[l - 1][i], span(i, j, 'w'))
-          // Of two ways as good as each other, the one with more on the earlier lines.
-          if (worst <= best[l][j] + 0.5) { best[l][j] = Math.min(worst, best[l][j]); back[l][j] = i }
+          const before = best[l - 1][i]
+          if (!before || (j - i > 1 && span(i, j, 'min') > limit + 0.5)) continue
+          const wide = span(i, j, 'w')
+          const cost = [Math.max(before[0], Math.ceil(wide / step)), before[1] + (i > 0 && ends && ends.size && !ends.has(i) ? 1 : 0), before[2] + wide * wide]
+          if (better(cost, best[l][j])) { best[l][j] = cost; back[l][j] = i }
         }
       }
     }
@@ -1044,6 +1050,8 @@ const LOOK_EVERY = 30
 const SMALLEST = 0.8
 /** On a touch screen they are drawn this much bigger, and never smaller than their size with a mouse: fingers need the room. */
 const FINGER_SCALE = 1.15
+/** Lines of plates that are this part of the width already are spread to fill all of it. */
+const FILLS = 0.6
 /** A finger on one of these moves the plates under it when there is more than fits: they take no hand themselves. */
 const SLIDES = new Set(['label', 'scope', 'meter'])
 
@@ -1394,7 +1402,7 @@ class Panel {
       m.lines = []
       for (const run of runs) {
         if (!run.length) continue
-        const made = wrapLines(run, inner, between)
+        const made = wrapLines(run, inner, between, null)
         this.wraps += made.length - 1
         m.lines.push(...made)
       }
@@ -1534,13 +1542,21 @@ class Panel {
    * share) is `wide`: it is as wide as the picture, and is not counted in `w`, the width the other lines share.
    */
   flow(kids, room) {
-    const gap = this.k.gap, runs = [[]], lines = []
+    const gap = this.k.gap, runs = [], lines = []
+    // Plates with titles are a panel: they stand side by side to fill the width, a row() between them saying
+    // where a line should end when a line has to. Anything else keeps its rows as they were written.
+    const titled = (kid) => !!(kid.label || kid.heading) && !kid.full
+    const join = this.options.wrap == null
+    let run = null, broke = false
     for (const kid of kids) {
-      if (isBreak(kid)) { runs.push([]); continue }
+      if (isBreak(kid)) { broke = true; continue }
       this.measure(kid, room)
-      runs.at(-1).push(kid)
+      if (run && broke && join && titled(kid) && run.kids.every(titled)) run.ends.add(run.kids.length)
+      else if (!run || broke) runs.push(run = { kids: [], ends: new Set() })
+      broke = false
+      run.kids.push(kid)
     }
-    for (const run of runs) if (run.length) lines.push(...wrapLines(run, room, () => gap))
+    for (const run of runs) lines.push(...wrapLines(run.kids, room, () => gap, run.ends))
     for (const line of lines) line.wide = line.kids.some((kid) => kid.full || kid.m.greedy)
     this.lines += lines.length
     return {
@@ -1640,7 +1656,10 @@ class Panel {
     const tall = Math.max(...bodies.map(([, flowed]) => flowed.h))
     const tabs = pages.length ? 32 * u : 0
     const stretch = !options.align || options.align === 'stretch'
-    const wide = side || !stretch ? room : Math.min(room, Math.max(above.w, below.w, ...bodies.map(([, flowed]) => flowed.w)) || room)
+    // The lines share one width: the whole width when the widest of them is most of it already (a panel is
+    // set against the picture's edges), else the widest line's own (a few dials are not pulled apart to fill a wall).
+    const widest = Math.max(above.w, below.w, ...bodies.map(([, flowed]) => flowed.w))
+    const wide = side || !stretch || !widest || widest >= room * FILLS ? room : widest
     const others = [above.h, tabs, below.h].filter((part) => part > 0)
     const fixed = others.reduce((sum, part) => sum + part + k.gap, 0)
     const need = fixed + tall - (tall > 0 ? 0 : k.gap)
@@ -1677,8 +1696,16 @@ class Panel {
     y += view.h + (view.h > 0 ? k.gap : 0)
     let end = y
     if (below.h) {
-      // Below the plates when everything fits; held at the bottom when the plates are moved or turned.
-      const held = pages.length || !fits || options.at === 'bottom'
+      // Below the plates when everything fits; held at the bottom when the plates are moved or turned. On a scene
+      // that draws nothing of its own (a panel) it is held just above the keyboard, and takes the height left over,
+      // so far: there is no dead room between the scope and the keys.
+      const panel = fits && this.blank && options.at !== 'bottom' && free.b < H && below.lines.some((line) => line.wide)
+      if (panel) {
+        const last = below.lines.at(-1), more = Math.max(0, Math.min(F.h - need, Math.max(last.h * 1.5, F.h * 0.22) - last.h))
+        last.h += more
+        below.h += more
+      }
+      const held = pages.length || !fits || options.at === 'bottom' || panel
       const by = held ? F.y + F.h - below.h : y
       this.put(below, x, by, room, wide)
       end = held ? F.y + F.h : by + below.h + k.gap

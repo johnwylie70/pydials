@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Layout. Controls are kept on titled plates: a `label` made just before some controls is their heading, and `with group("filter"):` (or `group("filter")` and then the controls) says so with options. Plates wrap whole, so a heading is never left behind; wrapped lines are balanced; the plates of a line share its width. Scenes written with `label` and `row()` alone are laid out this way with no change.
+- Plates with titles fill the width: they stand side by side in balanced lines set against both edges of the picture, as many to a line as fit, and a `row()` between them says where a line should end when one has to. A few controls with no titles keep their own width and their rows as written.
 - `with row():`, `with column():` and `with grid(3):` arrange what is inside a group, and nest. `spacer()` takes the room left over. Any control takes `size="small"` or `"large"`, `share=` and `span=`. A group takes `colour=`, `columns=`, `gap=`, `align=`, `dividers=` and `plate=`.
 - Controls are drawn a little smaller before a line wraps, and never tiny. What still does not fit is moved with a finger, the wheel or a bar, while the keyboard and the scope above it stay put.
 - `page("fx")`: pages of plates, turned with a tab. `fx.show()` turns to one.

@@ -394,3 +394,39 @@ def on_key_down(key):
     w.page.screenshot(path=str(SHOTS / "groups_pages.png"))
     w.clean()
     w.page.close()
+
+
+@pytest.mark.parametrize("size,lines", [((560, 1100), [2, 2, 1, 2]), ((1200, 1600), [4, 3])])
+def test_a_panel_written_as_seven_short_rows_fills_the_width_at_a_split_view_and_at_full_width(browser, pyctures_run, tmp_path, size, lines):
+    # The owner's second writing of the panel: a row() after every group, so that nothing would wrap in a narrow view.
+    w = Watched(browser, pyctures_run(scene_file(tmp_path, LEAD + """
+label("oscillator"); select("wave", lead, "wave"); dial("width", lead, "width"); dial("sub", lead, "sub")
+row()
+label("pwm"); dial("amount", lead, "lfo2.pulse_width"); dial("speed", lead, "lfo2.rate")
+row()
+label("unison"); dial("voices", lead, "voices"); dial("detune", lead, "detune"); dial("spread", lead, "spread")
+row()
+label("filter"); select("filter", lead, "filter"); dial("cutoff", lead, "cutoff"); dial("resonance", lead, "resonance")
+row()
+label("shape"); dial("attack", lead, "attack"); dial("decay", lead, "decay"); dial("sustain", lead, "sustain"); dial("release", lead, "release")
+row()
+label("delay"); dial("amount", lead, "echo"); dial("time", lead, "delay.time"); dial("feedback", lead, "delay.feedback")
+row()
+label("reverb"); dial("amount", lead, "reverb"); dial("size", lead, "reverb.size"); dial("chorus", lead, "chorus")
+scope(lead)
+keyboard(lead, octave=3, octaves=2)
+""")).url, size=size, touch=True)
+    w.ready(30)
+    w.page.wait_for_timeout(800)
+    got = w.page.evaluate(PLATES)
+    assert got["wrong"] == []
+    assert [len(line) for line in got["lines"]] == lines
+    # Each line of plates reaches both edges, and its plates are as tall as each other.
+    edges = w.page.evaluate("""(() => { const p = %s, rows = new Map()
+  for (const b of p.boxes.filter((b) => b.w > 0 && p.plated(b) && b.heading)) rows.set(Math.round(b.y), [...(rows.get(Math.round(b.y)) || []), b])
+  return [...rows.values()].map((line) => [line[0].x, p.W - (line.at(-1).x + line.at(-1).w), Math.max(...line.map((b) => b.h)) - Math.min(...line.map((b) => b.h))]) })()""" % PANEL)
+    assert all(left <= size[0] * 0.03 and right <= size[0] * 0.03 and uneven < 0.5 for left, right, uneven in edges), edges
+    SHOTS.mkdir(exist_ok=True)
+    w.page.screenshot(path=str(SHOTS / ("owner_rows_%d.png" % size[0])))
+    w.clean()
+    w.page.close()
