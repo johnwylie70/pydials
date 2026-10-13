@@ -1410,7 +1410,8 @@ class Panel {
     w = Math.max(w, Math.min(tw, inner))
     m.body = h
     m.w = m.max = w + 2 * pad
-    m.min = Math.min(w, Math.max(narrow, Math.min(tw, inner))) + 2 * pad
+    // A scope made outside any group keeps the whole width: nothing is put beside it.
+    m.min = box.full ? m.w : Math.min(w, Math.max(narrow, Math.min(tw, inner))) + 2 * pad
     m.h = h + th + 2 * pad
     box.m = m
     return m
