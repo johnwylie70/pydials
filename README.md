@@ -58,7 +58,7 @@ def draw():
 
 ![The second scene: a ball in the air above a row with a dial, a button and a switch](docs/images/bounce.png)
 
-A `button` is asked in `update`: `kick.pressed` is true once for each press, and `kick.held` for as long as it is down. A `toggle` is a switch: `if trail:`. `select("level", ["easy", "hard"])` is one of a list. The controls line themselves up in a row in the order you make them; `row()` starts another row.
+A `button` is asked in `update`: `kick.pressed` is true once for each press, and `kick.held` for as long as it is down. A `toggle` is a switch: `if trail:`. `select("level", ["easy", "hard"])` is one of a list. The controls line themselves up in the order you make them; `row()` starts another line. [Laying it out](#laying-it-out) has the rest.
 
 **3. A synth you can play.**
 
@@ -121,6 +121,122 @@ The scenes in `examples/` use a small stand-in synth (`examples/standin_synth.py
 - Each finger on the keyboard holds its own key, and sliding along plays each key in turn.
 - On a touch screen the controls are made a little bigger, for fingers.
 
+## Laying it out
+
+**There is nothing to do.** Controls line up in the order you make them, on a plate, with the keyboard along the bottom. On a narrow screen the line wraps evenly (six dials are three and three, never five and one), on a touch screen everything is a little bigger, and when the picture changes size it is all laid out again. Controls are drawn a little smaller before a line has to wrap, but never tiny: when there is more than fits, the plates can be moved with a finger, the mouse wheel or the bar beside them, while the keyboard and the scope above it stay where they are.
+
+**A label is a heading.** A `label` made just before some controls is the title of their plate, and they are kept together: a plate moves to the next line whole, never leaving its heading behind. `row()` starts a new line of plates. This is a whole synth panel, and it needs nothing else:
+
+```python
+label("oscillator")
+select("wave", lead, "wave")
+dial("width", lead, "width")
+
+row()
+label("unison")
+dial("voices", lead, "voices")
+dial("detune", lead, "detune")
+label("filter")
+dial("cutoff", lead, "cutoff")
+dial("resonance", lead, "resonance")
+```
+
+![A synth panel made of labels and controls: six titled plates, two of them side by side twice, a scope and a keyboard, at the width of a tablet's split view](docs/images/layout-headings.png)
+
+**Groups.** `group` says the same thing out loud, and takes options. What is made inside `with` is in the group:
+
+```python
+with group("filter"):
+    dial("cutoff", lead, "cutoff")
+    dial("resonance", lead, "resonance")
+```
+
+Or in a straight line, with nothing to indent: `group("filter")` and then its controls, until the next `group`, `row()` or `page`. The plates of a line share its width and are as tall as each other, and every line is as wide as the widest, so the panel looks made rather than poured. `examples/front_panel.py` is a whole synth in seven groups:
+
+![The front panel example: oscillator, unison, filter, envelope, delay, reverb and output plates above a keyboard](docs/images/front-panel.png)
+
+**Inside a group**, controls stand in a line. To arrange them another way, put these in it (they nest):
+
+| | |
+|---|---|
+| `with row():` | In a line. (`row()` alone starts a new line.) |
+| `with column():` | One under another. |
+| `with grid(3):` | Three to a line, in columns that line up; fewer where three will not fit. `span=2` on a control covers two columns. |
+| `spacer()` | All the room that is left over, so what follows is pushed to the far end. `spacer(20)` is 20 points. |
+| `size="small"`, `"large"` | On any control. A dial, slider and meter also take a number. |
+| `share=1` | On a control or a group: it takes the room its line has left over. Two things with shares of 2 and 1 split the line two to one. |
+
+A group takes `colour=` (for its title and every control in it), `columns=3` (a grid), `gap=`, `align=` (`"start"`, `"center"`, `"end"`; left out, its controls are spread along the line), `dividers=True` (a line between the groups inside it) and `plate=False`.
+
+```python
+with group("filter", colour="deepskyblue"):
+    with column():
+        select("kind", lead, "filter")
+        toggle("drive")
+    with grid(2):
+        dial("cutoff", lead, "cutoff", size="large", span=2)
+        dial("resonance", lead, "resonance", size="small")
+        dial("chorus", lead, "chorus", size="small")
+```
+
+**Pages.** When there is too much for one screen, give it pages. Each has a tab; the keyboard, and what is made before the first page and after the last, stay on every page.
+
+```python
+page("osc")
+group("oscillator")
+select("wave", lead, "wave")
+dial("width", lead, "width")
+page("filter")
+group("filter")
+dial("cutoff", lead, "cutoff")
+dial("resonance", lead, "resonance")
+page()                      # the pages end here
+scope(lead)
+keyboard(lead)
+```
+
+`with page("fx") as fx:` works too, and `fx.show()` turns to a page from your code.
+
+![Three tabs, osc, filter and fx, with the filter page on show: two plates, then a scope and a keyboard that are on every page](docs/images/layout-pages.png)
+
+**Along an edge, and the room that is left.** `layout(at="bottom")` puts the plates at the bottom, and `"left"` or `"right"` in a column down that side. One group can be a strip along an edge, and `room()` is the rectangle no control is on, for the scene to draw in:
+
+```python
+with group("moves", at="left"):
+    speed = dial("speed", 0, 10, 4)
+    jump = button("jump")
+    spacer()
+    trail = toggle("trail")
+with group(at="bottom"):
+    button("left")
+    button("right")
+    spacer()
+    button("fire", size="large")
+
+def draw():
+    area = room()                         # its x, y, width and height
+    rect(area.x, area.y, area.width, area.height, "steelblue")
+```
+
+The page works the rectangle out and tells Python with a frame, so in the scene's very first lines `room()` is still the whole picture.
+
+![A strip of controls down the left, a strip of buttons along the bottom, and the scene drawn in the rectangle between them](docs/images/layout-strips.png)
+
+Nothing here asks Python anything: each line above is one command to the page, and the page decides where things go.
+
+**Exactly where you say.** `x=` and `y=` on a control or a group place its top left corner, and `control.place(x, y)` moves it. With `layout(design=(800, 480))` those numbers are in a panel 800 by 480 that is scaled to fit the picture, so a front panel drawn once is right on every screen:
+
+```python
+layout(design=(800, 480), image="panel.png")            # a picture behind the controls
+dial("cutoff", lead, "cutoff", x=360, y=30, size="large")
+with group("osc", x=20, y=20, width=300):
+    select("wave", lead, "wave")
+    dial("sub", lead, "sub")
+keyboard(lead, x=20, y=340, width=760, height=120)
+```
+
+**The look.** `layout` also takes `compact=True` (less room around everything), `dividers=True`, `plates=False` (no plates: a picture of your own behind), `backdrop=` (a colour), `image=`, `align="center"` (plates keep their own widths) and `scale=`. `theme(accent="deepskyblue", plate="#20242c")` is still one call for the colours.
+
 ## The controls
 
 All of them take `x=` and `y=` (to place it by hand: its top left corner) and `colour=`.
@@ -136,9 +252,10 @@ All of them take `x=` and `y=` (to place it by hand: its top left corner) and `c
 | `keyboard(target, octave=4, octaves=2)` | A piano keyboard along the bottom. `piano.notes` is what is held now (60 is middle C). Also `keys=False` (no computer keys), `hints=False` (no letters on the keys), `on_note_on=` (given the note and how hard), `on_note_off=`. |
 | `scope(source)` | A line of numbers, live: a target with `samples()`, a function that returns a list, or a list. With no source, `graph.push(value)` adds a point. Also `min=`, `max=`, `width=`, `height=`, `points=`. |
 | `meter(source)` | A level from 0 to 1 as a bar of lights: a target with `level()`, a function, or `level.value = 0.7`. |
-| `label(text)` | Words in the row, as a heading. |
-| `row()` | The controls after this start a new row. |
-| `layout(at="bottom")` | Where the rows go (`"top"` or `"bottom"`), `scale=`, `margin=`, and `backdrop=` (True, False or a colour). |
+| `label(text)` | Words. Made just before some controls, it is their heading. |
+| `group`, `row`, `column`, `grid`, `page`, `spacer` | What goes with what: see [Laying it out](#laying-it-out). |
+| `layout(at="bottom")` | Where the plates go (`"top"`, `"bottom"`, `"left"`, `"right"`), `scale=`, `margin=`, `compact=`, `dividers=`, `plates=`, `align=`, `backdrop=` (True, False or a colour), `image=` and `design=`. |
+| `room()` | The rectangle no control is on: its `x`, `y`, `width` and `height`. |
 | `theme(accent="deepskyblue")` | The colours. |
 
 Every control has `value`, `remove()` and `place(x, y)`. `on_change(value)` is called when a hand changes it.
@@ -174,7 +291,7 @@ pip install -e ".[test]" && playwright install chromium
 pytest
 ```
 
-`tests/test_runtime.py` needs no browser. `tests/test_browser.py` runs scenes with `pyctures run` in a real Chromium and turns, presses and plays the controls.
+`tests/test_runtime.py` needs no browser. `tests/test_browser.py` runs scenes with `pyctures run` in a real Chromium (muted) and turns, presses and plays the controls, and lays out a panel written with labels alone, and one written with `with group(…)`, to see that every heading is on its controls' plate. The page's half is this repository's copy, whatever the Pyctures installed carries.
 
 ## Licence
 
