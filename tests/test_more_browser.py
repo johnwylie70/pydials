@@ -226,6 +226,7 @@ def update(dt):
     w.wait("window.result && window.result[0] === -1")
     # It is told its real size: the layout's, not the one that was asked for.
     w.wait("window.result[3] > 0 && window.result[3] === Math.round(%s.items[0].w / %s.items[0].u)" % (PANEL, PANEL))
+    w.wait("window.result[4] === 100")                          # a height asked for is the drawing area: the label has a line of its own
     w.wait("%s.items[0].ops && %s.items[0].ops.length === 2" % (PANEL, PANEL))
     x, y = w.spot(0, 0.2, 0.5)
     w.page.mouse.move(x, y)

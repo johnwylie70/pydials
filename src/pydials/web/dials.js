@@ -5755,7 +5755,7 @@ class Custom extends Control {
   /** A hand changed it: `pad.set(0.5)` is `pad.value = 0.5`, and also calls `onChange` and tells the target, as a dial does. */
   set(value) { this.v = value; this.changed(value) }
   scaleOf() { return 1 }
-  natural(u) { return [(this.wide || sized(this.size, 110, 150, 210)) * u, (this.tall || sized(this.size, 70, 100, 150) + (this.label ? 22 : 0)) * u] }
+  natural(u) { return [(this.wide || sized(this.size, 110, 150, 210)) * u, ((this.tall || sized(this.size, 70, 100, 150)) + (this.label ? 22 : 0)) * u] }
   stretch() { return this.wide ? [1, 1] : [0.6, 3] }
   /** The control's own points, and the painter its drawing is given. */
   painter(g, u, top = 0) {
