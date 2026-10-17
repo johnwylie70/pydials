@@ -42,6 +42,7 @@ Python. Any other target is a Python object, and is told a frame later.
 
 MIT licence.
 """
+import json
 import math
 import operator
 import os
@@ -2518,11 +2519,11 @@ _HOOKS = """return (api, id, pointer) => {
     if (item.pyWants && c.samples) {
       const n = c.samples.length, stride = Math.max(1, Math.ceil(n / 128)), out = []
       for (let i = 0; i < n; i += stride) out.push(Math.round(c.samples[i] * 1000) / 1000)
-      tell('samples', out)
+      tell('samples', JSON.stringify(out))        // as text: a list inside the event is nested too deep for the page to hand to Python
     }
-    if (item.pySpectrum) tell('spectrum', Array.from(c.spectrum, (v) => Math.round(v * 1000) / 1000))
+    if (item.pySpectrum) tell('spectrum', JSON.stringify(Array.from(c.spectrum, (v) => Math.round(v * 1000) / 1000)))
     const notes = c.input ? [...c.input].join() : ''
-    if (notes !== said) { said = notes; tell('notes', c.input ? [...c.input] : []) }
+    if (notes !== said) { said = notes; tell('notes', JSON.stringify(c.input ? [...c.input] : [])) }
   }
 }""" % _EVENT
 
@@ -2600,6 +2601,11 @@ class Painter:
 
     def clear(self, colour=None):
         self._add("clear", colour)
+
+
+def _listed(v):
+    """A list the page sent as JSON text (a list inside an event is nested too deep for the page to hand to Python)."""
+    return json.loads(v) if isinstance(v, str) else v
 
 
 class Pointer:
@@ -2719,13 +2725,13 @@ class Custom(Control):
                 self._level = value[2]
                 self.redraw()
             elif kind == "samples":
-                self._samples = value[2]
+                self._samples = _listed(value[2])
                 self.redraw()
             elif kind == "spectrum":
-                self._spectrum = value[2]
+                self._spectrum = _listed(value[2])
                 self.redraw()
             elif kind == "notes":
-                self._input = value[2]
+                self._input = _listed(value[2])
                 self.redraw()
             return
         self._value = value

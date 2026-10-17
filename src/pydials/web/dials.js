@@ -1215,7 +1215,7 @@ class Spectrum extends Control {
     const tall = ((this.tall || sized(this.size, 90, 130, 190)) + (this.label ? 18 : 0)) * u
     return this.wide ? [this.wide * u, tall] : [Math.min(room, sized(this.size, 200, 280, 380) * u), tall]
   }
-  stretch() { return this.wide ? [1, 1] : [0.5, Infinity] }
+  stretch() { return this.wide ? [1, 1] : [0.5, 4] }
   frame(now) {
     const data = this.pull ? this.pull() : this.list
     const dt = this.last ? Math.min(0.1, (now - this.last) / 1000) : 0
