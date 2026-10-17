@@ -914,7 +914,7 @@ class Keyboard extends Control {
   /** Where the MIDI button is: on the strip, beside the left arrow. */
   midiBox(u) {
     const s = this.shape(u)
-    return { x: this.x + 66 * u, y: this.y + 3 * u, w: 52 * u, h: s.strip - 6 * u }
+    return { x: this.x + 66 * u, y: this.y + 3 * u, w: 60 * u, h: s.strip - 6 * u }
   }
   get hasMidi() { return this.midi && this.w >= 230 * this.u && !!this.port }
   /** Made outside any group, and not placed by hand, it lies along the bottom. */
@@ -1140,14 +1140,14 @@ class Keyboard extends Control {
     g.lineWidth = 1.25 * u
     g.stroke()
     // The socket: a ring with five pins, as on the end of a MIDI lead.
-    const cx = b.x + 14 * u, cy = b.y + b.h / 2, r = 6 * u
+    const cx = b.x + 13 * u, cy = b.y + b.h / 2, r = 6 * u
     g.beginPath(); g.arc(cx, cy, r, 0, TAU)
     g.strokeStyle = hot ? THEME.good : here ? this.accent : THEME.dim
     g.lineWidth = 1.25 * u
     g.stroke()
     g.fillStyle = g.strokeStyle
     for (let i = 0; i < 5; i++) { const a = Math.PI * (1 + i / 4); g.beginPath(); g.arc(cx + Math.cos(a) * r * 0.55, cy - Math.sin(a) * r * 0.55 + r * 0.1, 0.9 * u, 0, TAU); g.fill() }
-    words(g, 'MIDI', b.x + 32 * u, cy + 0.5 * u, 10.5 * u, hot ? THEME.good : here ? THEME.text : THEME.dim, 'center', '600')
+    words(g, 'MIDI', b.x + 38 * u, cy + 0.5 * u, 10.5 * u, hot ? THEME.good : here ? THEME.text : THEME.dim, 'center', '600')
   }
   draw(g, u) {
     const s = this.shape(u), span = this.span(u), low = this.low
