@@ -343,8 +343,9 @@ All of them take `x=` and `y=` (to place it by hand: its top left corner) and `c
 | `toggle(label, on)` | A switch: `if mute:`. `toggle(label, target, "setting")` ties it to a setting. |
 | `rotary(label, choices, start)` | A knob that clicks between a few choices, with a notch for each and their names round it where there is room (a larger one shows more of each; with more than eight, only the one it is on). Drag to turn it from notch to notch, or tap a name. `mode.value`, `mode.index`, and `rotary(label, target, "setting")`, as a select. The choice is written under the knob only where no names are round it; `show_value=True` or `False` says otherwise. `select(…, style="rotary")` is the same. |
 | `select(label, choices, start)` | One of a list, stepped through with the arrows at its sides. `wave.value` is the choice, `wave.index` its place. `select(label, target, "setting")` takes the choices from the target. |
-| `keyboard(target, octave=4, octaves=2)` | A piano keyboard along the bottom. `piano.notes` is what is held now (60 is middle C). Also `keys=False` (no computer keys), `hints=False` (no letters on the keys), `animate=False` (the keys jump to a new octave, not slide), `on_note_on=` (given the note and how hard), `on_note_off=`. It never shows so many octaves that a key is too narrow to play. |
+| `keyboard(target, octave=4, octaves=2)` | A piano keyboard along the bottom. `piano.notes` is what is held now (60 is middle C). Also `keys=False` (no computer keys), `hints=False` (no letters on the keys), `animate=False` (the keys jump to a new octave, not slide), `on_note_on=` (given the note and how hard), `on_note_off=`, `midi=True` (a MIDI button, [below](#the-midi-button)). It never shows so many octaves that a key is too narrow to play. |
 | `scope(source)` | A line of numbers, live: a target with `samples()`, a function that returns a list, or a list. With no source, `graph.push(value)` adds a point. Also `min=`, `max=`, `width=`, `height=`, `points=`. |
+| `custom(label, width=, height=, draw=, on_down=, on_move=, on_up=)` | A control of your own: you draw it and say what a finger does. See [Your own controls](#your-own-controls). |
 | `meter(source)` | A level from 0 to 1 as a bar of lights: a target with `level()`, a function, or `level.value = 0.7`. |
 | `label(text)` | Words. Made just before some controls, it is their heading. |
 | `group`, `row`, `column`, `grid`, `page`, `spacer`, `wrap` | What goes with what: see [Laying it out](#laying-it-out). |
@@ -544,6 +545,94 @@ It plays whatever it is given: `target` (or `targets=`, a list or a dict by the 
 **Keeping time.** The page plays the beat, not Python, so a target that lives in the page (a synth) is in time however busy Python is. If that target (or `clock=`) offers `time()`, in seconds, it is handed each step a little before it is due, as `noteOn(note, velocity, { at })`, to play at exactly that time; with no such clock a step is played on the frame it falls due, and the beat will wobble when the page is busy. A Python object given as a target is played a frame after its step.
 
 `examples/drum_machine.py` is made of it, and `examples/trance.py` is a gated chord and an arpeggio drawn with the two pattern editors.
+
+## Your own controls
+
+`custom()` is a control that is whatever you draw and do. It sits in the layout like any other (a plate, a line, a grid) and has a `value`, `on_change`, `place()` and `remove()`. With it you can build the controls of an instrument of your own, a meter that follows any sound, a sequencer with its own idea of a step, or a pad that plays a drum.
+
+```python
+from pyctures import *
+from pydials import *
+
+def paint(c):
+    c.rect(0, 0, c.width, c.height, c.theme["well"], 10)
+    c.circle(c.value * c.width, c.height / 2, 14)
+
+def touch(p, c):
+    pad.set(p.x / c.width)                    # a hand changed it: the value, on_change and a redraw
+
+pad = custom("pad", width=240, height=80, value=0.5, draw=paint, on_down=touch, on_move=touch)
+```
+
+Do not call the drawing function `draw`: a function with that name is the scene's own.
+
+**How it looks.** `draw=` is called with a painter, `c`, which records shapes in the control's own points: (0, 0) is its top left and (`c.width`, `c.height`) its bottom right. The page draws them. A colour left out is the control's accent.
+
+| | |
+|---|---|
+| `c.rect(x, y, w, h, colour, radius)` | a filled rectangle, with rounded corners if `radius` says so |
+| `c.frame(x, y, w, h, colour, thickness, radius)` | its outline |
+| `c.circle(x, y, r, colour)`, `c.ring(x, y, r, colour, thickness)` | a disc, and a circle's outline |
+| `c.line(x1, y1, x2, y2, colour, thickness)` | a line |
+| `c.lines(points, colour, thickness)` | a line through a list of (x, y) points: a wave |
+| `c.polygon(points, colour)` | a filled shape |
+| `c.text(words, x, y, colour, size, align)` | words (`align` is `"left"`, `"center"` or `"right"`) |
+| `c.clear(colour)` | fill the whole control |
+
+The painter also knows `c.width`, `c.height`, `c.value`, `c.held` (a finger is down), `c.accent`, `c.label`, and `c.theme`, the colours of the controls (`"text"`, `"dim"`, `"well"`, `"track"`, `"knob"`, `"plate"`, `"edge"`, `"good"`, `"warn"`, `"hot"`). `c.width` and `c.height` are what the layout gave it, which may not be what `width=` and `height=` asked for.
+
+It is drawn again when its value changes, when a finger touches it, when you call `pad.redraw()`, and every frame with `animate=True`.
+
+**What a finger does.** `on_down(p, c)`, `on_move(p, c)` and `on_up(p, c)` are called, a frame later, with where the finger is: `p.x` and `p.y` in the control's own points, `p.id` (which finger) and `p.shift`. `pad.held` says a finger is down. `pad.set(value)` is a hand changing it: it sets `pad.value`, calls `on_change(value)` and draws it again, while `pad.value = value` only draws it again.
+
+**What it listens to.** `source=` is a synth in the page, and then `c.level` (how loud it is, 0 to 1), `c.samples` (its wave) and `c.input` (the notes it is sounding) are filled for you every frame, which is what makes a meter, a scope or a keyboard of your own:
+
+```python
+lead = make_synth("lead")
+
+def paint_level(c):
+    c.circle(c.width / 2, c.height / 2, 14 + 26 * c.level)
+
+custom("level", width=120, height=110, source=lead, draw=paint_level)
+```
+
+A function as `source=` is called every frame and its answer is `c.input`. `on_frame(c)` is called every frame too, for a control that keeps time:
+
+```python
+import time
+
+steps = [1, 0, 0, 1, 0, 1, 0, 0]
+at, last = -1, 0.0
+
+def paint_steps(c):
+    w = c.width / len(steps)
+    for i, on in enumerate(steps):
+        c.rect(i * w + 2, 6, w - 4, c.height - 12, c.accent if on else c.theme["knob"], 5)
+
+def keep_time(c):
+    global at, last
+    if time.monotonic() - last < 0.15:        # a step every 0.15 seconds
+        return
+    last = time.monotonic()
+    at = (at + 1) % len(steps)
+    if steps[at]:
+        lead.play(48, 0.2)
+
+custom("steps", width=420, height=56, draw=paint_steps, on_frame=keep_time)
+```
+
+[`examples/custom_instrument.py`](examples/custom_instrument.py) is a whole one: a ribbon to play a scale, a ring that grows with the sound, and a row of steps that plays itself.
+
+## The MIDI button
+
+`keyboard(lead, midi=True)` puts a MIDI button on the strip above the keys. A tap connects (the browser asks first), and its panel chooses which device the synth listens to (every one, or one) and which channel (every one, or 1 to 16). What is chosen there is what `lead.play_from_midi()` listens to, and a choice made in code shows in the panel. The button lights green as notes arrive, and the keys a MIDI keyboard holds are lit.
+
+```python
+lead = make_synth("lead")
+keyboard(lead, octave=4, midi=True)
+```
+
+MIDI works in Chrome, Edge and Firefox on a computer. Where there is none the panel says so. The button is there for a synth that lives in the page and can say which MIDI input it listens to (its `midiInput()`); a keyboard with another target, or none, has no button.
 
 ## Targets
 

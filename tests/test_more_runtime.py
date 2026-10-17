@@ -307,3 +307,83 @@ def test_a_drum_sequencer_is_worked_from_python_and_its_steps_are_heard():
     r = tick({"c": [1, ["step", 1, 2, 1], 1, "x.......\n..X...x.", 1, ["mute", 0, 1], 1, ["tempo", 96]]})
     assert r["out"].strip() == "..X...x. 2 [True, False] [38, ('snare', 2, 1)]"
     assert sent(r, "set") == [[1, "tempo", 140]]            # a hand set it to 96, and update() put it back
+
+
+EVENT = "\u0001dials"
+
+
+def test_a_control_of_your_own_is_made_drawn_as_a_list_of_shapes_and_sent_again_only_when_it_changes():
+    r = start("""
+        from pydials import *
+        def paint(c):
+            c.rect(0, 0, c.width, c.height, "#222", 8)
+            c.circle(c.value * c.width, 20, 5)
+            c.lines([(0, 0), (10, 10)], "white", 2)
+            c.text("hi", 5, 5, size=10)
+        pad = custom("pad", width=200, height=80, value=0.5, draw=paint)
+        print(pad.value, pad.held)
+        def update(dt):
+            pad.value = 0.25
+    """)
+    assert r["error"] is None
+    assert made(r) == [("custom", 1, {"label": "pad", "width": 200, "height": 80, "value": 0.5})]
+    shapes = [[["rect", 0, 0, 200, 80, "#222", 8], ["circle", 100.0, 20, 5, None], ["lines", [[0.0, 0.0], [10.0, 10.0]], "white", 2],
+               ["text", "hi", 5, 5, None, 10, "center"]]]
+    assert [c[2] for c in sent(r, "set") if c[1] == "ops"][0] == shapes[0]
+    # update() moved the value: it was drawn again at the new place, and the first drawing was sent once.
+    assert [c[2][1][1] for c in sent(r, "set") if c[1] == "ops"] == [100.0, 50.0]
+    assert out(r) == ["0.5", "False"]
+    # A frame with nothing new sends no drawing.
+    assert [c for c in sent(tick(), "set") if c[1] == "ops"] == []
+
+
+def test_a_finger_on_a_control_of_your_own_calls_back_with_its_place_and_the_control_is_drawn_again():
+    start("""
+        from pydials import *
+        log = []
+        def paint(c):
+            c.rect(0, 0, c.width * c.value, c.height)
+        def down(p, c):
+            log.append(("down", p.x, p.y, p.id, p.shift))
+            pad.set(p.x / c.width)
+        def move(p, c):
+            log.append(("move", round(p.x)))
+        def up(p, c):
+            log.append(("up", pad.held))
+        heard = []
+        pad = custom("pad", width=100, height=50, value=0, draw=paint, on_down=down, on_move=move, on_up=up, on_change=heard.append)
+        def update(dt):
+            print(log, heard, pad.value, pad.held)
+    """)
+    r = tick({"c": [1, [EVENT, "pointer", "down", 25.0, 10.0, 1, 1]]})
+    assert r["out"].strip() == "[('down', 25.0, 10.0, 1, True)] [0.25] 0.25 True"
+    assert [c[2][0][3] for c in sent(r, "set") if c[1] == "ops"] == [25.0]
+    r = tick({"c": [1, [EVENT, "pointer", "move", 60.2, 10.0, 1, 0], 1, [EVENT, "pointer", "up", 60.2, 10.0, 1, 0]]})
+    assert r["out"].strip() == "[('down', 25.0, 10.0, 1, True), ('move', 60), ('up', False)] [0.25] 0.25 False"
+
+
+def test_a_control_of_your_own_is_given_its_real_size_what_a_synth_in_the_page_hears_and_what_a_function_gives():
+    start("""
+        from pydials import *
+        seen = []
+        def paint(c):
+            seen.append((c.width, c.height, round(c.level, 2), c.input))
+        pad = custom("pad", draw=paint, source=lambda: "A4", animate=True)
+        def update(dt):
+            print(seen[-1], pad.value)
+    """)
+    r = tick({"c": [1, [EVENT, "size", 321.5, 77.0]], "b": 1})
+    assert r["out"].strip() == "(321.5, 77.0, 0.0, 'A4') None"
+
+
+def test_a_keyboard_asks_for_the_midi_button_only_when_it_is_told_to():
+    r = start("""
+        from pydials import *
+        from standin_synth import make_synth
+        lead = make_synth()
+        keyboard(lead, octave=4, midi=True)
+        keyboard(lead, octave=3)
+    """.replace("from standin_synth import make_synth", "from synths import *").replace("make_synth()", "make_synth('lead')"))
+    assert r["error"] is None
+    specs = [m[2] for m in made(r) if m[0] == "keyboard"]
+    assert specs[0].get("midi") is True and "midi" not in specs[1]

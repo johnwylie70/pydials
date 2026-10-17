@@ -199,3 +199,87 @@ def update(dt):
     w.wait("!window.result[1] && !window.result[2]")
     w.clean()
     w.page.close()
+
+
+def test_a_control_of_your_own_is_dragged_and_python_has_it_and_the_page_draws_what_python_drew(browser, pyctures_run, tmp_path):
+    w = Watched(browser, pyctures_run(scene_file(tmp_path, """
+from pyctures import *
+from pydials import *
+
+def paint(c):
+    c.rect(0, 0, c.width, c.height, c.theme["well"], 10)
+    c.circle(max(0, c.value) * c.width, c.height / 2, 14)
+
+def touch(p, c):
+    pad.set(p.x / c.width)
+
+def let_go(p, c):
+    ups.append(1)
+
+ups = []
+pad = custom("pad", width=300, height=100, value=-1, draw=paint, on_down=touch, on_move=touch, on_up=let_go)
+
+def update(dt):
+    js.result = [round(pad.value, 2), pad.held, len(ups), round(pad._width), round(pad._height)]
+""")).url)
+    w.ready(1)
+    w.wait("window.result && window.result[0] === -1")
+    # It is told its real size: the layout's, not the one that was asked for.
+    w.wait("window.result[3] > 0 && window.result[3] === Math.round(%s.items[0].w / %s.items[0].u)" % (PANEL, PANEL))
+    w.wait("%s.items[0].ops && %s.items[0].ops.length === 2" % (PANEL, PANEL))
+    x, y = w.spot(0, 0.2, 0.5)
+    w.page.mouse.move(x, y)
+    w.page.mouse.down()
+    w.wait("window.result[1] === true && window.result[0] > 0.1 && window.result[0] < 0.4")
+    w.page.mouse.move(x + 150, y, steps=5)
+    w.wait("window.result[0] > 0.6")
+    w.wait("%s.items[0].ops[1][1] > 150" % PANEL)               # the circle was drawn again, further along
+    w.page.mouse.up()
+    w.wait("window.result[1] === false && window.result[2] === 1")
+    w.clean()
+    w.page.close()
+
+
+def test_a_keyboard_made_with_midi_has_the_button_and_its_panel_chooses_the_device_and_channel(browser, pyctures_run, tmp_path):
+    # A synth in the page that has a midiInput(), as the one in synths.js does: made here by hand so that the test is of the keyboard.
+    w = Watched(browser, pyctures_run(scene_file(tmp_path, """
+from pyctures import *
+from pydials import *
+
+lead = js.Function(\"\"\"
+  const state = { device: 'all', channel: 'all' }, devices = ['all', 'Keystation 49', 'Launchkey Mini']
+  const channels = ['all', ...Array.from({ length: 16 }, (_, i) => String(i + 1))]
+  window.__listening = 0
+  window.__level = 0
+  const port = {
+    get: (name) => state[name], set: (name, value) => { state[name] = value },
+    describe: (name) => ({ name, kind: 'text', choices: name === 'device' ? devices : channels }),
+    level: () => window.__level, notes: () => [],
+  }
+  return { noteOn() {}, noteOff() {}, midiInput: () => port, playFromMidi() { window.__listening++ } }
+\"\"\")()
+piano = keyboard(lead, octave=4, midi=True)
+plain = keyboard(None, octave=3, midi=True)
+""")).url)
+    w.ready(2)
+    w.wait("%s.items[0].hasMidi && !%s.items[1].hasMidi" % (PANEL, PANEL))    # a keyboard with no synth has no button
+    button = "(() => { const k = %s.items[0], b = k.midiBox(k.u), r = document.querySelector('[data-pyctures-src] canvas').getBoundingClientRect(); return [r.left + b.x + b.w / 2, r.top + b.y + b.h / 2] })()" % PANEL
+    x, y = w.page.evaluate(button)
+    w.page.mouse.click(x, y)
+    w.wait("%s.popup && %s.popup.constructor.name === 'MidiPopup' && %s.popup.h0 > 0 && window.__listening === 1" % (PANEL, PANEL, PANEL))   # the first tap tells the synth to listen
+    assert w.page.evaluate("%s.popup.devices()" % PANEL) == ["all", "Keystation 49", "Launchkey Mini"]
+    # A line of the panel is a tap: the second device, then channel 3.
+    line = "(() => { const p = %s.popup, r = document.querySelector('[data-pyctures-src] canvas').getBoundingClientRect(); return [r.left + p.x + 60, r.top + p.y + 30 * p.u + p.line * 2 + p.line / 2] })()" % PANEL
+    px, py = w.page.evaluate(line)
+    w.page.mouse.click(px, py)
+    w.wait("%s.items[0].port.get('device') === 'Launchkey Mini'" % PANEL)
+    cell = "(() => { const p = %s.popup, r = document.querySelector('[data-pyctures-src] canvas').getBoundingClientRect(); const i = p.channels().indexOf('3'); return [r.left + p.x + 10 * p.u + (i %% p.perRow) * p.cell + p.cell / 2, r.top + p.y + p.h0 + 24 * p.u + Math.floor(i / p.perRow) * (p.cell - 6 * p.u) + p.cell / 2 - 3 * p.u] })()" % PANEL
+    cx, cy = w.page.evaluate(cell)
+    w.page.mouse.click(cx, cy)
+    w.wait("String(%s.items[0].port.get('channel')) === '3'" % PANEL)
+    w.page.mouse.click(450, 20)                                    # outside the panel: it closes
+    w.wait("!%s.popup" % PANEL)
+    w.page.evaluate("window.__level = 0.9")                        # a key struck: the button lights
+    w.wait("%s.items[0].midiLit > 0" % PANEL)
+    w.clean()
+    w.page.close()

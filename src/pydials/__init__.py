@@ -80,6 +80,7 @@ class _Run:
         self.room = None        # the rectangle no control is on, as the page last told it
         self.view = None        # the picture's width and height and the scale the controls are drawn at, likewise
         self.on_resize = None   # what the scene asked to be called with them when they change
+        self.hooks = None       # the page's half of a control of your own, made the first time one is wanted
 
 
 _run = _Run()
@@ -936,14 +937,17 @@ def rotary(label="", a=None, b=None, *, value=None, show_value=None, x=None, y=N
 
 
 def keyboard(target=None, *, octave=None, octaves=None, keys=None, hints=None, animate=None, x=None, y=None, width=None,
-             height=None, share=None, span=None, colour=None, color=None, on_note_on=None, on_note_off=None):
+             height=None, share=None, span=None, colour=None, color=None, on_note_on=None, on_note_off=None, midi=None):
     """A piano keyboard that plays `target`: keyboard(lead, octave=4). With no target, read `notes` or give on_note_on.
 
     Made outside any group it lies along the bottom; made in one, it is where the group puts it. The keys slide
-    when the octave changes; animate=False makes them jump."""
+    when the octave changes; animate=False makes them jump.
+
+    midi=True puts a MIDI button on the strip above the keys: a tap connects, and its panel chooses the device and
+    the channel the synth listens to. It is there for a synth (a target in the page) and left out for any other target."""
     return Keyboard(target, _options(octave=octave, octaves=octaves, keys=keys, hints=hints, animate=animate, x=x, y=y, width=width,
                                      height=height, share=share, span=span, colour=colour, color=color,
-                                     on_note_on=on_note_on, on_note_off=on_note_off))
+                                     on_note_on=on_note_on, on_note_off=on_note_off, midi=midi))
 
 
 def _labelled(label, source):
@@ -1101,7 +1105,7 @@ def theme(**colours):
 __all__ += ["number", "stepper", "text_box", "readout", "checkbox", "choose", "radio", "dropdown", "xy_pad", "colour_picker",
             "color_picker", "progress", "light", "busy", "range_slider", "fader", "joystick", "dpad", "action_button",
             "envelope", "step_grid", "pads", "wheel", "mod_wheel", "pitch_wheel",
-            "steps", "trance_gate", "arp_pattern", "drum_seq"]
+            "steps", "trance_gate", "arp_pattern", "drum_seq", "custom"]
 
 
 class Number(_Ranged):
@@ -2453,3 +2457,266 @@ def drum_seq(label=None, rows=None, target=None, *, steps=None, tempo=None, swin
     return DrumSeq(rows, target, _options(label=label, steps=steps, tempo=tempo, swing=swing, pattern=pattern, value=value,
                                           playing=playing, targets=targets, notes=notes, clock=clock, x=x, y=y, share=share,
                                           span=span, colour=colour, color=color, on_change=on_change, on_step=on_step))
+
+
+# ---------------------------------------------------------------- your own control
+
+_EVENT = "\u0001dials"     # what the page's hooks put first in a list they send, so that it is not taken for a value
+
+# The page's half of a control of your own. Python draws and decides; the page replays the drawing (`ops`) and
+# reports what happened to it: a finger (down, move, up), its real size once the layout has set it, and, for a
+# control that listens to a synth in the page, how loud that is, its wave and its notes.
+_HOOKS = """return (api, id, pointer) => {
+  const panel = api.panel, item = panel.find(id)
+  if (!item) return
+  const tell = (...what) => panel.told.push(id, [%r, ...what])
+  for (const kind of pointer) item.hear[kind] = (p) => tell('pointer', kind, p.x, p.y, p.id, p.shift ? 1 : 0)
+  let w = -1, h = -1, level = -1, said = ''
+  item.hear.frame = (c) => {
+    if (c.width > 0 && c.height > 0 && (c.width !== w || c.height !== h)) { w = c.width; h = c.height; tell('size', Math.round(w * 10) / 10, Math.round(h * 10) / 10) }
+    if (!item.watch) return
+    if (Math.abs(c.level - level) > 0.01) { level = c.level; tell('level', Math.round(level * 100) / 100) }
+    if (item.pyWants && c.samples) {
+      const n = c.samples.length, stride = Math.max(1, Math.ceil(n / 128)), out = []
+      for (let i = 0; i < n; i += stride) out.push(Math.round(c.samples[i] * 1000) / 1000)
+      tell('samples', out)
+    }
+    const notes = c.input ? [...c.input].join() : ''
+    if (notes !== said) { said = notes; tell('notes', c.input ? [...c.input] : []) }
+  }
+}""" % _EVENT
+
+
+class Painter:
+    """What a control's draw(c) is given. It records the drawing, in the control's own points: (0, 0) is its top left
+    and (c.width, c.height) its bottom right. The page replays it. A colour left out is the control's accent.
+
+    c.rect(x, y, w, h, colour, radius)   c.frame(x, y, w, h, colour, thickness, radius)   c.clear(colour)
+    c.circle(x, y, r, colour)            c.ring(x, y, r, colour, thickness)
+    c.line(x1, y1, x2, y2, colour, thickness)    c.lines(points, colour, thickness)    c.polygon(points, colour)
+    c.text(words, x, y, colour, size, align)
+
+    And what the control knows: c.width, c.height, c.value, c.held, c.accent, c.label, c.theme (the colours of the
+    controls: "text", "dim", "well", "track", "knob", "plate", "edge", "good", "warn", "hot"), and, when it listens to a
+    synth, c.level (how loud, 0 to 1), c.samples (its wave) and c.input (the notes sounding). With source= a function,
+    c.input is what the function gave."""
+
+    THEME = {"plate": "#1c1f27", "edge": "#313744", "well": "#0b0d11", "track": "#3a4150", "knob": "#2b303b", "text": "#eef0f4",
+             "dim": "#9aa2b1", "accent": "#ffb224", "good": "#3ddc84", "warn": "#ffc53d", "hot": "#ff5c5c"}
+
+    def __init__(self, control):
+        self._control = control
+        self.ops = []
+        self.theme = dict(self.THEME)
+
+    width = property(lambda self: self._control._width)
+    height = property(lambda self: self._control._height)
+    value = property(lambda self: self._control._value)
+    held = property(lambda self: self._control._held)
+    label = property(lambda self: self._control.label)
+    input = property(lambda self: self._control._input)
+    level = property(lambda self: self._control._level)
+    accent = property(lambda self: self._control._colour or self.theme["accent"])
+
+    @property
+    def samples(self):
+        # Asking for the wave is what makes the page send it, a frame at a time, so it is only sent when it is wanted.
+        self._control._want_samples()
+        return self._control._samples
+
+    def _add(self, *op):
+        self.ops.append(list(op))
+
+    def rect(self, x, y, w, h, colour=None, radius=0):
+        self._add("rect", x, y, w, h, colour, radius)
+
+    def frame(self, x, y, w, h, colour=None, thickness=1, radius=0):
+        self._add("frame", x, y, w, h, colour, thickness, radius)
+
+    def circle(self, x, y, r, colour=None):
+        self._add("circle", x, y, r, colour)
+
+    def ring(self, x, y, r, colour=None, thickness=1):
+        self._add("ring", x, y, r, colour, thickness)
+
+    def line(self, x1, y1, x2, y2, colour=None, thickness=1):
+        self._add("line", x1, y1, x2, y2, colour, thickness)
+
+    def lines(self, points, colour=None, thickness=1):
+        self._add("lines", [[float(a), float(b)] for a, b in points], colour, thickness)
+
+    def polygon(self, points, colour=None):
+        self._add("polygon", [[float(a), float(b)] for a, b in points], colour)
+
+    def text(self, words, x, y, colour=None, size=12, align="center"):
+        self._add("text", str(words), x, y, colour, size, align)
+
+    def clear(self, colour=None):
+        self._add("clear", colour)
+
+
+class Pointer:
+    """A finger or the mouse on a control of your own: x and y in the control's own points, id (which finger), shift."""
+
+    def __init__(self, x, y, id, shift):
+        self.x, self.y, self.id, self.shift = x, y, id, bool(shift)
+
+    def __repr__(self):
+        return "<Pointer %.1f, %.1f>" % (self.x, self.y)
+
+
+class Custom(Control):
+    """A control that is whatever you draw and do. See custom()."""
+    kind = "custom"
+
+    def __init__(self, spec):
+        self._draw = spec.pop("draw", None)
+        self._hear = {"down": spec.pop("on_down", None), "move": spec.pop("on_move", None), "up": spec.pop("on_up", None)}
+        self._on_frame = spec.pop("on_frame", None)
+        self._animate = bool(spec.pop("animate", False))
+        source = spec.pop("source", None)
+        self._pull = None
+        self._watching = False
+        page = _in_page(source)
+        if page is not None:
+            spec["source"] = page
+            self._watching = True
+        elif callable(source):
+            self._pull = source
+        elif source is not None:
+            self._pull = _method(source, "level", "samples", "notes")
+        self._value = spec.get("value")
+        self._colour = spec.get("colour")
+        self._held = False
+        self._input = None
+        self._level = 0.0
+        self._samples = None
+        self._wants = False
+        # Until the layout says how big it is: what the page gives a control of its kind that was told nothing.
+        size = spec.get("size")
+        scale = {"small": 0, "large": 2}.get(size, 1) if not isinstance(size, (int, float)) else 1
+        self._width = spec.get("width") or (110, 150, 210)[scale]
+        self._height = spec.get("height") or (70, 100, 150)[scale]
+        self._painter = Painter(self)
+        self._sent = None
+        self._stale = True
+        Control.__init__(self, spec)
+        pointer = [name for name, fn in self._hear.items() if fn]
+        _page_hooks()(_page(), self._id, pointer)
+        if self._animate or self._on_frame or self._pull:
+            _beat()
+        if self._pull:
+            self._input = self._pull()
+        self.redraw()
+
+    @property
+    def value(self):
+        return self._value
+
+    @value.setter
+    def value(self, value):
+        self._value = value
+        self.redraw()
+
+    held = property(lambda self: self._held, doc="True while a finger is on it.")
+
+    def set(self, value):
+        """A hand changed it: the value is set, on_change is called, and it is drawn again."""
+        self.value = value
+        if self.on_change:
+            self.on_change(value)
+
+    def redraw(self):
+        """Draw it again, with what is known now: after something your own code keeps has changed."""
+        self._stale = True
+        self._paint()
+
+    def _paint(self):
+        if not self._draw:
+            return
+        self._stale = False
+        painter = self._painter
+        painter.ops = []
+        self._draw(painter)
+        if painter.ops != self._sent:
+            self._sent = painter.ops
+            self._set("ops", painter.ops)
+
+    def _want_samples(self):
+        if not self._wants and self._watching:
+            self._wants = True
+            self._set("pyWants", True)
+
+    def _told(self, value):
+        if isinstance(value, (list, tuple)) and value and value[0] == _EVENT:
+            kind = value[1]
+            if kind == "pointer":
+                _, _, what, x, y, id, shift = value
+                self._held = what != "up"
+                fn = self._hear.get(what)
+                if fn:
+                    fn(Pointer(x, y, id, shift), self._painter)
+                self.redraw()
+            elif kind == "size":
+                self._width, self._height = value[2], value[3]
+                self.redraw()
+            elif kind == "level":
+                self._level = value[2]
+                self.redraw()
+            elif kind == "samples":
+                self._samples = value[2]
+                self.redraw()
+            elif kind == "notes":
+                self._input = value[2]
+                self.redraw()
+            return
+        self._value = value
+        if self.on_change:
+            self.on_change(value)
+        self.redraw()
+
+    def _frame(self):
+        if self._pull:
+            now = self._pull()
+            if now != self._input:
+                self._input = now
+                self._stale = True
+        if self._on_frame:
+            self._on_frame(self._painter)
+        if self._animate or self._stale:
+            self._paint()
+
+
+def _page_hooks():
+    if _run.hooks is None:
+        _run.hooks = _pyctures().js.Function(_HOOKS)()
+    return _run.hooks
+
+
+def custom(label=None, *, width=None, height=None, value=None, draw=None, on_down=None, on_move=None, on_up=None,
+           on_frame=None, animate=None, source=None, x=None, y=None, share=None, span=None, size=None, colour=None,
+           color=None, on_change=None):
+    """A control of your own. You say how it looks and what a finger does to it; it sits in the layout like any other.
+
+        def paint(c):
+            c.rect(0, 0, c.width, c.height, c.theme["well"], 10)
+            c.circle(c.value * c.width, c.height / 2, 14)
+
+        def touch(p, c):
+            pad.set(p.x / c.width)
+
+        pad = custom("pad", width=240, height=80, value=0.5, draw=paint, on_down=touch, on_move=touch)
+
+    (Do not name it draw: a function called draw() is the scene's own.) draw(c) is called with a painter (see Painter): it records shapes in the control's own points, and the page
+    draws them. It is called again when the value changes, a finger touches the control, c.redraw() or
+    pad.redraw() is called, and every frame with animate=True (for something that moves by itself).
+    on_down(p, c), on_move(p, c) and on_up(p, c) are called, a frame later, with where the finger is (p.x, p.y, in
+    the control's own points). on_frame(c) is called every frame. pad.value is whatever you keep, pad.set(v) is a hand
+    changing it (it calls on_change(v) too), and `pad.held` says a finger is down.
+
+    source= is what it listens to: a synth in the page (then c.level, c.samples and c.input are filled for each
+    frame: a ring that grows with the sound, a line that is its wave), or a function whose answer is c.input.
+    A control that draws nothing of its own (no draw=) is blank."""
+    return Custom(_options(label=label, width=width, height=height, value=value, draw=draw, on_down=on_down, on_move=on_move,
+                           on_up=on_up, on_frame=on_frame, animate=animate, source=source, x=x, y=y, share=share, span=span,
+                           size=size, colour=colour, color=color, on_change=on_change))

@@ -33,13 +33,15 @@ def browser():
 class Watched:
     """A page showing one scene, with its errors collected."""
 
-    def __init__(self, browser, url, size=(900, 700), touch=False):
+    def __init__(self, browser, url, size=(900, 700), touch=False, init=None):
         self.page = browser.new_page(viewport={"width": size[0], "height": size[1]}, has_touch=touch, is_mobile=touch)
         self.errors = []
         self.page.on("console", lambda m: self.errors.append(m.text) if m.type == "error" else None)
         self.page.on("pageerror", lambda e: self.errors.append(str(e)))
         # A Pyctures that has the dials built in serves a copy of its own: these tests are of the page's half that is here.
         self.page.route("**/dials/dials.js", lambda route: route.fulfill(path=str(ROOT / "src" / "pydials" / "web" / "dials.js"), content_type="text/javascript"))
+        if init:
+            self.page.add_init_script(init)
         self.page.goto(url)
 
     def wait(self, what, timeout=20):

@@ -71,7 +71,7 @@ const THEME = {
 }
 
 /** A spec's keys in one spelling: on_change is onChange, color is colour. */
-const SPELLING = { color: 'colour', on_change: 'onChange', on_press: 'onPress', on_release: 'onRelease', on_note_on: 'onNoteOn', on_note_off: 'onNoteOff', title: 'label', show_value: 'showValue', log_from: 'logFrom', min_scale: 'minScale', max_scale: 'maxScale', on_resize: 'onResize' }
+const SPELLING = { color: 'colour', on_change: 'onChange', on_press: 'onPress', on_release: 'onRelease', on_note_on: 'onNoteOn', on_note_off: 'onNoteOff', on_down: 'onDown', on_move: 'onMove', on_up: 'onUp', on_key: 'onKey', on_frame: 'onFrame', title: 'label', show_value: 'showValue', log_from: 'logFrom', min_scale: 'minScale', max_scale: 'maxScale', on_resize: 'onResize' }
 const spelled = (spec) => {
   const out = {}
   for (const key in spec) out[SPELLING[key] || key] = spec[key]
@@ -820,7 +820,25 @@ class Keyboard extends Control {
     this.slid = null // the keys sliding to a new octave: { from: how far across they started, at: when }
     this.pull = null // a finger on the strip above the keys, dragging them sideways
     this.arrow = null // an arrow held down: it steps again and again
+    // `midi: true` puts a MIDI button on the strip: it opens the device and channel the target listens to.
+    this.midi = !!spec.midi
+    this.midiPort = null
+    this.midiAsked = false
+    this.midiLit = 0
+    this.midiTap = null
   }
+  /** The target's own MIDI input (device and channel), or null where it has none. */
+  get port() {
+    if (!this.midi || this.midiPort) return this.midiPort
+    const ask = method(this.target, 'midiInput', 'midi_input')
+    return (this.midiPort = ask ? ask() : null)
+  }
+  /** Where the MIDI button is: on the strip, beside the left arrow. */
+  midiBox(u) {
+    const s = this.shape(u)
+    return { x: this.x + 66 * u, y: this.y + 3 * u, w: 52 * u, h: s.strip - 6 * u }
+  }
+  get hasMidi() { return this.midi && this.w >= 230 * this.u && !!this.port }
   /** Made outside any group, and not placed by hand, it lies along the bottom. */
   get docked() { return !this.box && !this.at }
   /** The octave of the lowest key: 4 starts at middle C. */
@@ -919,6 +937,10 @@ class Keyboard extends Control {
     if (p.y < s.top) {
       // The strip: its left end steps down an octave, its right end up, again and again while it is held.
       // A finger on the rest of it drags the keys sideways, and they settle on a whole octave when it lifts.
+      if (this.hasMidi) {
+        const b = this.midiBox(u)
+        if (p.x >= b.x && p.x < b.x + b.w && p.y >= b.y && p.y < b.y + b.h) { this.midiTap = p.id; this.touch(); return }
+      }
       const by = p.x < this.x + 64 * u ? -1 : p.x > this.x + this.w - 64 * u ? 1 : 0
       if (by) { this.arrow = { id: p.id, by, next: performance.now() + KEY_HOLD_MS }; this.step(by) }
       else if (!this.pull) this.pull = { id: p.id, from: p.x, by: this.offset }
@@ -948,7 +970,20 @@ class Keyboard extends Control {
     if (was != null) this.release(was)
     this.fingers.set(p.id, now)
   }
+  /** Open the MIDI panel. The first time, the synth is told to listen (which is when the browser asks for permission). */
+  showMidi() {
+    if (!this.hasMidi) return
+    if (!this.midiAsked) { this.midiAsked = true; const listen = method(this.target, 'playFromMidi', 'play_from_midi'); if (listen) { try { listen() } catch (e) { /* the panel says what is wrong */ } } }
+    this.list = new MidiPopup(this).open()
+  }
   up(p) {
+    if (this.midiTap === p.id) {
+      this.midiTap = null
+      const b = this.midiBox(this.u)
+      if (p.x >= b.x && p.x < b.x + b.w && p.y >= b.y && p.y < b.y + b.h) this.showMidi()
+      this.touch()
+      return
+    }
     if (this.arrow && this.arrow.id === p.id) this.arrow = null
     if (this.pull && this.pull.id === p.id) {
       // Let go: the keys settle on the nearest whole octave.
@@ -994,14 +1029,43 @@ class Keyboard extends Control {
     // Cheap when nothing moves: only a keyboard that is sliding, or whose arrow is held, is drawn again.
     if (this.slid) { if (performance.now() - this.slid.at >= KEY_SLIDE_MS) this.slid = null; this.touch() }
     if (this.arrow && performance.now() >= this.arrow.next) { this.arrow.next = performance.now() + KEY_AGAIN_MS; this.step(this.arrow.by) }
+    if (this.list && this.list.shown && this.list.sync) this.list.sync()
+    if (this.hasMidi && this.port.level) {
+      const lit = Math.round(this.port.level() * 8)
+      if (lit !== this.midiLit) { this.midiLit = lit; this.touch() }
+    }
     const ask = method(this.target, 'notes')
-    if (!ask) return
-    const now = ask()
+    // The keys a MIDI keyboard is holding are lit too, even before the synth says it is sounding them.
+    const held = this.hasMidi && this.port.notes ? this.port.notes() : null
+    if (!ask && !(held && held.length) && !this.sounding) return
+    const heard = ask ? ask() : null
+    const now = held && held.length ? [...(heard || []), ...held] : heard
     const said = now ? [...now].join() : ''
     if (said === this.heard) return
     this.heard = said
     this.sounding = said ? new Set(now) : null
     this.touch()
+  }
+  /** The MIDI button: a small socket mark and the word, lit when a device is there, and green as notes arrive. */
+  drawMidi(g, u) {
+    const b = this.midiBox(u), choices = (this.port.describe('device') || {}).choices || []
+    const here = choices.some((name) => !/no devices|no midi/i.test(String(name)) && String(name) !== 'all')
+    const open = !!this.list && this.list.shown, hot = this.midiLit > 0
+    rounded(g, b.x, b.y, b.w, b.h, b.h / 2)
+    g.fillStyle = open || this.midiTap != null ? THEME.track : THEME.knob
+    g.fill()
+    g.strokeStyle = hot ? THEME.good : here ? this.accent : THEME.edge
+    g.lineWidth = 1.25 * u
+    g.stroke()
+    // The socket: a ring with five pins, as on the end of a MIDI lead.
+    const cx = b.x + 14 * u, cy = b.y + b.h / 2, r = 6 * u
+    g.beginPath(); g.arc(cx, cy, r, 0, TAU)
+    g.strokeStyle = hot ? THEME.good : here ? this.accent : THEME.dim
+    g.lineWidth = 1.25 * u
+    g.stroke()
+    g.fillStyle = g.strokeStyle
+    for (let i = 0; i < 5; i++) { const a = Math.PI * (1 + i / 4); g.beginPath(); g.arc(cx + Math.cos(a) * r * 0.55, cy - Math.sin(a) * r * 0.55 + r * 0.1, 0.9 * u, 0, TAU); g.fill() }
+    words(g, 'MIDI', b.x + 32 * u, cy + 0.5 * u, 10.5 * u, hot ? THEME.good : here ? THEME.text : THEME.dim, 'center', '600')
   }
   draw(g, u) {
     const s = this.shape(u), span = this.span(u), low = this.low
@@ -1011,6 +1075,7 @@ class Keyboard extends Control {
     words(g, '‹', this.x + 14 * u, this.y + s.strip / 2 - 2 * u, 20 * u, this.accent)
     words(g, '›', this.x + this.w - 14 * u, this.y + s.strip / 2 - 2 * u, 20 * u, this.accent)
     words(g, `C${this.first} to C${this.first + span}`, this.x + this.w / 2, this.y + s.strip / 2 - 2 * u, 12 * u, THEME.dim)
+    if (this.hasMidi) this.drawMidi(g, u)
     // The keys, where they are now: across by `offset` while they slide, with those coming in from the side drawn too.
     const offset = this.offset
     const from = offset ? Math.floor(-offset / s.each) - 1 : 0, to = offset ? from + s.whites + 2 : s.whites
@@ -3357,6 +3422,86 @@ class ListPopup extends Popup {
   }
 }
 
+
+/**
+ * THE MIDI BUTTON'S PANEL, opened from a keyboard made with `midi: true`: which device to listen to (every one, or
+ * one), and which channel (every one, or 1 to 16). It reads and sets the keyboard's target's own `midiInput()`, so
+ * what is chosen here is what `lead.playFromMidi()` listens to, and a choice made in code shows here.
+ */
+class MidiPopup extends Popup {
+  constructor(owner) {
+    super(owner.panel, owner)
+    this.pressed = null
+    this.said = ''
+  }
+  closed() { this.owner.touch() }
+  /** Each frame while it is open: a device plugged in, or a choice made in code, is drawn when it happens. */
+  sync() {
+    const now = JSON.stringify([this.devices(), this.port.get('device'), this.port.get('channel')])
+    if (now !== this.said) { this.said = now; this.touch() }
+  }
+  get port() { return this.owner.midiPort }
+  devices() { const d = this.port.describe('device'); return d && Array.isArray(d.choices) ? d.choices.map(String) : [] }
+  channels() { const d = this.port.describe('channel'); return d && Array.isArray(d.choices) ? d.choices.map(String) : [] }
+  /** True where MIDI cannot reach the page (a browser with none). */
+  get missing() { return this.devices().some((d) => /no midi/i.test(d)) }
+  arrange(g, u) {
+    const f = this.owner.midiBox(u), channels = this.channels(), perRow = 6
+    this.line = 30 * u
+    const lines = this.missing ? 3 : Math.max(1, this.devices().length)
+    this.h0 = 30 * u + lines * this.line + (this.missing ? 0 : 8 * u)
+    this.cell = 36 * u
+    const rows = this.missing ? 0 : Math.ceil(channels.length / perRow)
+    this.perRow = perRow
+    this.put(Math.max(230 * u, perRow * this.cell + 20 * u), this.h0 + (rows ? 24 * u + rows * (this.cell - 6 * u) + 10 * u : 8 * u), [f.x, f.y, f.w, f.h])
+  }
+  hit(p) {
+    const u = this.u
+    if (p.y < this.y + 30 * u) return null
+    const devices = this.devices()
+    if (!this.missing && p.y < this.y + 30 * u + devices.length * this.line) return { device: devices[Math.floor((p.y - this.y - 30 * u) / this.line)] }
+    const top = this.y + this.h0 + 24 * u, row = Math.floor((p.y - top) / (this.cell - 6 * u)), col = Math.floor((p.x - (this.x + 10 * u)) / this.cell)
+    if (this.missing || row < 0 || col < 0 || col >= this.perRow) return null
+    return { channel: this.channels()[row * this.perRow + col] }
+  }
+  press(p) { this.pressed = this.hit(p); this.touch() }
+  lift(p) {
+    const at = this.hit(p), was = this.pressed
+    this.pressed = null
+    if (at && was && (at.device === was.device) && (at.channel === was.channel)) {
+      if (at.device !== undefined) this.port.set('device', at.device)
+      else if (at.channel !== undefined) this.port.set('channel', at.channel)
+    }
+    this.touch()
+  }
+  keyDown(e) { if (e.key === 'Escape') { this.close(); return true } return false }
+  draw(g, u) {
+    const accent = this.owner.accent, devices = this.devices(), chosen = String(this.port.get('device')), channel = String(this.port.get('channel'))
+    words(g, 'MIDI in', this.x + 14 * u, this.y + 16 * u, 13 * u, THEME.dim, 'left', '600')
+    if (this.missing) {
+      const say = ['MIDI is not available in this browser.', 'It works in Chrome, Edge and Firefox', 'on a computer, and in the apps.']
+      say.forEach((line, i) => words(g, line, this.x + 14 * u, this.y + 44 * u + i * 24 * u, 12.5 * u, THEME.text, 'left'))
+      return
+    }
+    devices.forEach((name, i) => {
+      const y = this.y + 30 * u + i * this.line, on = name === chosen, pressed = this.pressed && this.pressed.device === name
+      if (on || pressed) { rounded(g, this.x + 4 * u, y + 2 * u, this.w - 8 * u, this.line - 4 * u, 7 * u); g.fillStyle = pressed ? THEME.track : THEME.knob; g.fill() }
+      if (on) tick(g, this.x + 22 * u, y + this.line / 2, 12 * u, accent, 2.25 * u)
+      words(g, name, this.x + 40 * u, y + this.line / 2 + 0.5 * u, 14 * u, on ? THEME.text : THEME.dim, 'left', on ? '600' : '', this.w - 54 * u)
+    })
+    const top = this.y + this.h0 + 24 * u
+    words(g, 'Channel', this.x + 14 * u, this.y + this.h0 + 10 * u, 13 * u, THEME.dim, 'left', '600')
+    this.channels().forEach((name, i) => {
+      const x = this.x + 10 * u + (i % this.perRow) * this.cell, y = top + Math.floor(i / this.perRow) * (this.cell - 6 * u)
+      const on = name === channel, pressed = this.pressed && this.pressed.channel === name
+      rounded(g, x + 2 * u, y + 2 * u, this.cell - 4 * u, this.cell - 10 * u, 7 * u)
+      g.fillStyle = on ? accent : pressed ? THEME.track : THEME.knob
+      g.fill()
+      words(g, name, x + this.cell / 2, y + this.cell / 2 - 3 * u, 13 * u, on ? THEME.well : THEME.text, 'center', on ? '700' : '')
+    })
+  }
+}
+
 /**
  * A DROPDOWN: one of a list too long to step through. It shows the choice; a tap opens the whole
  * list over the controls, which is moved with a finger or the wheel when it is long, and closes on
@@ -5542,8 +5687,120 @@ class Wheel extends Slider {
   }
 }
 
+
+// --------------------------------------------------------------------------------------------
+/**
+ * YOUR OWN CONTROL. Everything a control is, left to your code: how it looks, what a finger does to it, and what it
+ * listens to. It sits in the layout like any other (a plate, a line, a grid), has `value`, `onChange`, `place`
+ * and `remove`, and is drawn only when it needs to be. That is how a synth of your own gets its own dials, a
+ * meter that follows any sound, a sequencer with its own idea of a step or a pad that plays a drum.
+ *
+ *   const pad = custom("pad", {
+ *     width: 160, height: 120,                // its natural size, in points
+ *     draw(c) { c.rect(0, 0, c.width, c.height, "#222", 8); c.circle(c.value * c.width, 60, 12, c.accent) },
+ *     onDown(p, c) { pad.set(p.x / c.width) },  // p.x and p.y are in the control's own points
+ *     onMove(p, c) { pad.set(p.x / c.width) },
+ *     onUp(p, c) {},
+ *     animate: true,                           // draw every frame, for something that follows a sound
+ *     source: lead,                            // optional: a target with level() or samples(), or a function
+ *   })
+ *
+ * `draw(c)` is given a painter. Its shapes are in the control's own points, from (0, 0) at its top left to
+ * (c.width, c.height): c.rect, c.circle, c.line, c.lines, c.polygon, c.text, c.clear, and `c.g`, the canvas's own
+ * 2D context, for anything else. For a host that cannot hand over a function (Python's), `ops` is the same
+ * drawing as a list: [["rect", x, y, w, h, colour, radius], ["text", words, x, y, colour, size, align], ...].
+ */
+const PAINT = {
+  rect: (c, x, y, w, h, colour, radius = 0) => { rounded(c.g, x, y, w, h, radius); c.g.fillStyle = colour || c.accent; c.g.fill() },
+  frame: (c, x, y, w, h, colour, thick = 1, radius = 0) => { rounded(c.g, x, y, w, h, radius); c.g.strokeStyle = colour || c.accent; c.g.lineWidth = thick; c.g.stroke() },
+  circle: (c, x, y, r, colour) => { c.g.beginPath(); c.g.arc(x, y, r, 0, TAU); c.g.fillStyle = colour || c.accent; c.g.fill() },
+  ring: (c, x, y, r, colour, thick = 1) => { c.g.beginPath(); c.g.arc(x, y, r, 0, TAU); c.g.strokeStyle = colour || c.accent; c.g.lineWidth = thick; c.g.stroke() },
+  line: (c, x1, y1, x2, y2, colour, thick = 1) => { c.g.beginPath(); c.g.moveTo(x1, y1); c.g.lineTo(x2, y2); c.g.strokeStyle = colour || c.accent; c.g.lineWidth = thick; c.g.lineCap = 'round'; c.g.stroke() },
+  lines: (c, points, colour, thick = 1) => {
+    if (!points || points.length < 2) return
+    c.g.beginPath()
+    points.forEach(([x, y], i) => (i ? c.g.lineTo(x, y) : c.g.moveTo(x, y)))
+    c.g.strokeStyle = colour || c.accent; c.g.lineWidth = thick; c.g.lineJoin = 'round'; c.g.stroke()
+  },
+  polygon: (c, points, colour) => {
+    if (!points || points.length < 3) return
+    c.g.beginPath()
+    points.forEach(([x, y], i) => (i ? c.g.lineTo(x, y) : c.g.moveTo(x, y)))
+    c.g.closePath(); c.g.fillStyle = colour || c.accent; c.g.fill()
+  },
+  text: (c, said, x, y, colour, size = 12, align = 'center') => words(c.g, String(said), x, y, size, colour || THEME.text, align),
+  clear: (c, colour) => { c.g.fillStyle = colour || THEME.well; c.g.fillRect(0, 0, c.width, c.height) },
+}
+const PAINTER = Object.fromEntries(Object.entries(PAINT).map(([name, fn]) => [name, function (...args) { return fn(this, ...args) }]))
+
+class Custom extends Control {
+  constructor(panel, kind, spec) {
+    super(panel, kind, spec)
+    this.drawer = spec.draw || null
+    this.ops = spec.ops || null
+    this.hear = { down: spec.onDown, move: spec.onMove, up: spec.onUp, key: spec.onKey, frame: spec.onFrame }
+    this.animate = !!spec.animate
+    this.pull = typeof spec.source === 'function' ? spec.source : null
+    this.watch = this.pull ? null : spec.source && typeof spec.source === 'object' ? spec.source : null
+    this.v = spec.value
+    this.input = undefined
+    this.samples = null
+    this.level = 0
+    this.fresh = true
+  }
+  get value() { return this.v }
+  set value(value) { this.v = value; this.touch() }
+  /** Redraw it, after something your own code kept has changed. */
+  redraw() { this.touch() }
+  /** A hand changed it: `pad.set(0.5)` is `pad.value = 0.5`, and also calls `onChange` and tells the target, as a dial does. */
+  set(value) { this.v = value; this.changed(value) }
+  scaleOf() { return 1 }
+  natural(u) { return [(this.wide || sized(this.size, 110, 150, 210)) * u, (this.tall || sized(this.size, 70, 100, 150) + (this.label ? 22 : 0)) * u] }
+  stretch() { return this.wide ? [1, 1] : [0.6, 3] }
+  /** The control's own points, and the painter its drawing is given. */
+  painter(g, u, top = 0) {
+    const c = Object.create(PAINTER)
+    c.g = g; c.width = this.w / u; c.height = this.h / u - top; c.u = u; c.value = this.v; c.held = this.held
+    c.accent = this.accent; c.label = this.label; c.input = this.input; c.samples = this.samples; c.level = this.level; c.theme = THEME
+    return c
+  }
+  frame(now) {
+    if (this.pull) { const was = this.input; this.input = this.pull(); if (this.input !== was) this.touch() }
+    else if (this.watch) {
+      const samples = method(this.watch, 'samples'), level = method(this.watch, 'level'), notes = method(this.watch, 'notes')
+      if (samples) this.samples = samples()
+      if (level) { const l = level(); this.level = Array.isArray(l) ? Math.max(...l) : Number(l) || 0 }
+      if (notes) this.input = notes()
+    }
+    if (this.hear.frame) this.hear.frame(this.painter(null, this.u, this.label ? 22 : 0), now)
+    if (this.animate || this.fresh) { this.fresh = false; this.touch() }
+  }
+  down(p) { this.send('down', p) }
+  move(p) { this.send('move', p) }
+  up(p) { this.send('up', p); this.touch() }
+  send(what, p) {
+    const fn = this.hear[what], top = this.label ? 22 : 0
+    this.touch()
+    if (!fn) return
+    fn({ x: (p.x - this.x) / this.u, y: (p.y - this.y) / this.u - top, id: p.id, shift: !!p.shift }, this.painter(null, this.u, top))
+  }
+  keyDown(e) { return this.hear.key ? !!this.hear.key(e, this.painter(null, this.u, this.label ? 22 : 0)) : false }
+  draw(g, u) {
+    g.save()
+    g.beginPath(); g.rect(this.x, this.y, this.w, this.h); g.clip()
+    g.translate(this.x, this.y)
+    g.scale(u, u)
+    const top = this.label ? 22 : 0, c = this.painter(g, u, top)
+    if (this.label) words(g, this.label, this.w / u / 2, 12, 12, THEME.dim, 'center', '', this.w / u - 6)
+    g.translate(0, top)
+    if (this.drawer) this.drawer(c)
+    if (this.ops) for (const [name, ...args] of this.ops) if (PAINT[name]) PAINT[name](c, ...args)
+    g.restore()
+  }
+}
+
 Object.assign(KINDS, { joystick: Joystick, dpad: Dpad, actionButton: ActionButton, envelope: Envelope, stepGrid: StepGrid, pads: Pads, wheel: Wheel,
-  steps: StepLane, tranceGate: TranceGate, arpPattern: ArpPattern, drumSeq: DrumSeq })
+  steps: StepLane, tranceGate: TranceGate, arpPattern: ArpPattern, drumSeq: DrumSeq, custom: Custom })
 Object.assign(KINDS, { number: NumberBox, textBox: TextBox, readout: Readout, checkbox: Checkbox, choose: Choose, radio: Radio, dropdown: Dropdown,
   xyPad: XYPad, colourPicker: ColourPicker, progress: Progress, light: Light, busy: Busy, rangeSlider: RangeSlider, fader: Fader })
 for (const kind of ['readout', 'progress', 'light', 'busy']) SLIDES.add(kind)
@@ -5706,6 +5963,8 @@ function more(panel) {
     drumSeq: make('drumSeq', sequenced),
     /** For a host: a pattern made by number, with the settings beside it, and what it took from its target told as for any control. */
     pattern: (kind, id, spec) => { const item = patterned(panel, kind, { ...spelled(spec), id }); if (item.target) panel.made.push(id, 0, 1, 0, '', item.v) },
+    /** Your own control: pad = custom("pad", { draw(c) { … }, onDown(p, c) { … }, animate: true, source: lead }). See the notes above the Custom class. */
+    custom: make('custom', ([a, b]) => (typeof a === 'string' ? { ...b, label: a } : { ...a })),
     modWheel: make('wheel', ranged),
     pitchWheel: make('wheel', (args) => { const spec = ranged(args); return { spring: true, ...(spec.target || spec.min != null ? null : { min: -1, max: 1, value: 0 }), ...spec } }),
   }
@@ -5942,8 +6201,9 @@ const arpPattern = (...args) => dials().arpPattern(...args)
 const drumSeq = (...args) => dials().drumSeq(...args)
 const modWheel = (...args) => dials().modWheel(...args)
 const pitchWheel = (...args) => dials().pitchWheel(...args)
+const custom = (...args) => dials().custom(...args)
 
 export { dials, dial, slider, button, toggle, select, rotary, keyboard, scope, meter, label, group, row, column, grid, page, spacer, wrap, layout, room, over, theme, version,
   number, stepper, textBox, readout, checkbox, choose, radio, dropdown, xyPad, colourPicker, colorPicker, progress, light, busy, rangeSlider, fader,
   joystick, dpad, actionButton, envelope, stepGrid, pads, wheel, modWheel, pitchWheel,
-  steps, tranceGate, arpPattern, drumSeq }
+  steps, tranceGate, arpPattern, drumSeq, custom }
