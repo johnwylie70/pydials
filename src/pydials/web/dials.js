@@ -102,7 +102,8 @@ function writeTarget(target, param, value) {
 
 // --- drawing helpers
 function rounded(g, x, y, w, h, r) {
-  r = Math.min(r, w / 2, h / 2)
+  // A box with no size (a panel in a frame that is hidden) is drawn as nothing: a negative radius throws.
+  r = Math.max(0, Math.min(r, w / 2, h / 2))
   g.beginPath()
   g.moveTo(x + r, y)
   g.arcTo(x + w, y, x + w, y + h, r)
@@ -2661,10 +2662,16 @@ class Panel {
     g.beginPath()
     g.rect(x, y, right - x, bottom - y)
     g.clip()
-    if (again) this.ground()
-    item.draw(g, item.u)
-    if (again) this.cover()
-    g.restore()
+    // One control that cannot be drawn (its own code threw) must not take the rest with it, nor leave its clip behind.
+    try {
+      if (again) this.ground()
+      item.draw(g, item.u)
+      if (again) this.cover()
+    } catch (e) {
+      if (!item.said) { item.said = true; console.warn('dials: a control could not be drawn: ' + (e && e.message)) }
+    } finally {
+      g.restore()
+    }
   }
 
   // --- pointers
@@ -5794,8 +5801,8 @@ class Wheel extends Slider {
 const PAINT = {
   rect: (c, x, y, w, h, colour, radius = 0) => { rounded(c.g, x, y, w, h, radius); c.g.fillStyle = colour || c.accent; c.g.fill() },
   frame: (c, x, y, w, h, colour, thick = 1, radius = 0) => { rounded(c.g, x, y, w, h, radius); c.g.strokeStyle = colour || c.accent; c.g.lineWidth = thick; c.g.stroke() },
-  circle: (c, x, y, r, colour) => { c.g.beginPath(); c.g.arc(x, y, r, 0, TAU); c.g.fillStyle = colour || c.accent; c.g.fill() },
-  ring: (c, x, y, r, colour, thick = 1) => { c.g.beginPath(); c.g.arc(x, y, r, 0, TAU); c.g.strokeStyle = colour || c.accent; c.g.lineWidth = thick; c.g.stroke() },
+  circle: (c, x, y, r, colour) => { c.g.beginPath(); c.g.arc(x, y, Math.max(0, r), 0, TAU); c.g.fillStyle = colour || c.accent; c.g.fill() },
+  ring: (c, x, y, r, colour, thick = 1) => { c.g.beginPath(); c.g.arc(x, y, Math.max(0, r), 0, TAU); c.g.strokeStyle = colour || c.accent; c.g.lineWidth = thick; c.g.stroke() },
   line: (c, x1, y1, x2, y2, colour, thick = 1) => { c.g.beginPath(); c.g.moveTo(x1, y1); c.g.lineTo(x2, y2); c.g.strokeStyle = colour || c.accent; c.g.lineWidth = thick; c.g.lineCap = 'round'; c.g.stroke() },
   lines: (c, points, colour, thick = 1) => {
     if (!points || points.length < 2) return
@@ -5867,19 +5874,23 @@ class Custom extends Control {
   }
   keyDown(e) { return this.hear.key ? !!this.hear.key(e, this.painter(null, this.u, this.label ? 22 : 0)) : false }
   draw(g, u) {
+    if (this.w < 2 || this.h < 2) return
     const top = this.label ? 22 : 0
     g.save()
     g.beginPath(); g.rect(this.x, this.y, this.w, this.h); g.clip()
     g.translate(this.x, this.y)
     g.scale(u, u)
-    const c = this.painter(g, u, top)
-    if (this.label) words(g, this.label, this.w / u / 2, 12, 12, THEME.dim, 'center', '', this.w / u - 6)
-    // What is drawn is cut at the edge of its own area: the label line above it is not drawn over.
-    g.beginPath(); g.rect(0, top, this.w / u, this.h / u - top); g.clip()
-    g.translate(0, top)
-    if (this.drawer) this.drawer(c)
-    if (this.ops) for (const [name, ...args] of this.ops) if (PAINT[name]) PAINT[name](c, ...args)
-    g.restore()
+    try {
+      const c = this.painter(g, u, top)
+      if (this.label) words(g, this.label, this.w / u / 2, 12, 12, THEME.dim, 'center', '', this.w / u - 6)
+      // What is drawn is cut at the edge of its own area: the label line above it is not drawn over.
+      g.beginPath(); g.rect(0, top, this.w / u, this.h / u - top); g.clip()
+      g.translate(0, top)
+      if (this.drawer) this.drawer(c)
+      if (this.ops) for (const [name, ...args] of this.ops) if (PAINT[name]) PAINT[name](c, ...args)
+    } finally {
+      g.restore()
+    }
   }
 }
 
