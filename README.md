@@ -108,7 +108,13 @@ pyctures run panel.py
 
 Your browser opens on the scene. Save the file and it runs again.
 
-Nothing here is published yet. Until it is, install it from a copy of this repository with `pip install -e .`, beside Pyctures.
+pydials is on PyPI as a beta: `pip install pydials`. It draws on the Pyctures page, and the Pyctures that `pip install pyctures` gives today (0.2.0) does not carry the page's half yet, so until its next release use Pyctures from GitHub:
+
+```bash
+git clone https://github.com/johnwylie70/pyctures
+pip install -e pyctures
+pip install pydials
+```
 
 The scenes in `examples/` use a small stand-in synth (`examples/standin_synth.py`, the browser's own oscillators) so that they need no sound library: `pyctures run examples/synth_panel.py`.
 
