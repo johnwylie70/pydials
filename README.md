@@ -349,7 +349,7 @@ All of them take `x=` and `y=` (to place it by hand: its top left corner) and `c
 | `toggle(label, on)` | A switch: `if mute:`. `toggle(label, target, "setting")` ties it to a setting. |
 | `rotary(label, choices, start)` | A knob that clicks between a few choices, with a notch for each and their names round it where there is room (a larger one shows more of each; with more than eight, only the one it is on). Drag to turn it from notch to notch, or tap a name. `mode.value`, `mode.index`, and `rotary(label, target, "setting")`, as a select. The choice is written under the knob only where no names are round it; `show_value=True` or `False` says otherwise. `select(…, style="rotary")` is the same. |
 | `select(label, choices, start)` | One of a list, stepped through with the arrows at its sides. `wave.value` is the choice, `wave.index` its place. `select(label, target, "setting")` takes the choices from the target. |
-| `keyboard(target, octave=4, octaves=2)` | A piano keyboard along the bottom. `piano.notes` is what is held now (60 is middle C). Also `keys=False` (no computer keys), `hints=False` (no letters on the keys), `animate=False` (the keys jump to a new octave, not slide), `on_note_on=` (given the note and how hard), `on_note_off=`, `midi=True` (a MIDI button, [below](#the-midi-button)). It never shows so many octaves that a key is too narrow to play. |
+| `keyboard(target, octave=4, octaves=2)` | A piano keyboard along the bottom. `piano.notes` is what is held now (60 is middle C). Also `keys=False` (no computer keys), `hints=False` (no letters on the keys), `animate=False` (the keys jump to a new octave, not slide), `on_note_on=` (given the note and how hard), `on_note_off=`, `midi=True` (a MIDI button, [below](#the-midi-button)). It shows as many octaves as you ask for, and no more than leave a key wide enough to play: on a touch screen a white key is at least 40 points wide (as the tracker's piano), so a phone shows one or two octaves and a tablet more. |
 | `scope(source)` | A line of numbers, live: a target with `samples()`, a function that returns a list, or a list. With no source, `graph.push(value)` adds a point. Also `min=`, `max=`, `width=`, `height=`, `points=`. |
 | `custom(label, width=, height=, draw=, on_down=, on_move=, on_up=, source=, design=)` | A control of your own: you draw it and say what a finger does. See [Your own controls](#your-own-controls). |
 | `spectrum(source)` | The frequencies in a sound as bars, low to high from the left: a synth, a function that returns a list of numbers, or a list. Also `bands=` (32), `peaks=False` (no ticks that hold), `rate=` (48000, the sound card's rate), `width=`, `height=`, `size=`. See [Spectrum](#spectrum). |
@@ -647,7 +647,7 @@ custom("steps", width=420, height=56, draw=paint_steps, on_frame=keep_time)
 
 **Drawn inside its own box.** A control of your own is drawn on a layer of its own, the size of its area under the label, and that layer is laid on the panel. So nothing it draws can be seen outside its area, however large the shape: a ring far bigger than the box is cut at its edge and never reaches the controls beside it. A drawing that raises an error, or a control with no size to draw in (a panel in a hidden frame), is skipped, and the other controls are drawn as usual.
 
-**`design=(width, height)`** is the size you draw for. `c.width` and `c.height` are then that, whatever size the control really has, and what you draw is scaled to fit it and centred in it, so the same drawing fits a phone and a desk. `p.x` and `p.y` of a finger are points of the design too.
+**`design=(width, height)`** is the size you draw for. `c.width` and `c.height` are then that, whatever size the control really has, and what you draw is scaled to fit it and centred in it, so the same drawing fits a phone and a desk. `p.x` and `p.y` of a finger are points of the design too. Give a design and no `height=`, and the control keeps the design's shape: on a line too narrow for it, it is as wide as the line and as tall as that makes it (with `height=`, the box is the size you say).
 
 **An analyser of your own.** The ready-made `spectrum`, `scope` and `meter` are controls like these, so one of your own is the same few lines. This one draws a level in dB as thirty lights, the spectrum as bars with ticks that hold, and the wave, for a size of 640 by 300:
 
@@ -665,7 +665,7 @@ def paint_analyser(c):
         bars[i] = max(v, bars[i] - 0.02)                     # rise at once, fall away
         c.rect(100 + i * each + 1, 24 + 180 * (1 - bars[i]), each - 2, 180 * bars[i], c.accent)
 
-custom(width=640, height=300, design=(640, 300), bands=BANDS, source=lead, animate=True, draw=paint_analyser)
+custom(design=(640, 300), bands=BANDS, source=lead, animate=True, draw=paint_analyser)
 ```
 
 [`examples/custom_analyser.py`](examples/custom_analyser.py) is the whole one, with the level, the grid, the ticks that hold and the wave. The same control in JavaScript has the same options (`design: [640, 300]`, `bands`, `rate`) and the same `c.spectrum`: see [dials.js](https://github.com/johnwylie70/dials.js#your-own-analyser).

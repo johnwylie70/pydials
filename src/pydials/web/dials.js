@@ -791,7 +791,7 @@ const SCOPE_LEAST = 56
 const SHORT_VIEW = 480
 /** A white key is never narrower than this, in points: with a mouse, and under a finger. Fewer octaves are shown instead. */
 const KEY_LEAST = 14
-const KEY_LEAST_FINGER = 22
+const KEY_LEAST_FINGER = 40            // as the tracker's piano: a white key is a finger wide, so a phone shows fewer octaves
 /** How long the keys take to slide to a new octave, in milliseconds; an arrow held down steps again after the first wait, then at each of the next. */
 const KEY_SLIDE_MS = 220
 const KEY_HOLD_MS = 450
@@ -1156,7 +1156,9 @@ class Keyboard extends Control {
     const hints = this.keys && (this.hints ?? !this.panel.coarse) && s.each >= 22 * u
     words(g, '‹', this.x + 14 * u, this.y + s.strip / 2 - 2 * u, 20 * u, this.accent)
     words(g, '›', this.x + this.w - 14 * u, this.y + s.strip / 2 - 2 * u, 20 * u, this.accent)
-    words(g, `C${this.first} to C${this.first + span}`, this.x + this.w / 2, this.y + s.strip / 2 - 2 * u, 12 * u, THEME.dim)
+    // The range is said in the room between the MIDI button (when there is one) and the right arrow.
+    const roomLeft = this.hasMidi ? this.midiBox(u).x + this.midiBox(u).w : this.x + 64 * u, roomRight = this.x + this.w - 64 * u
+    words(g, `C${this.first} to C${this.first + span}`, this.hasMidi ? (roomLeft + roomRight) / 2 : this.x + this.w / 2, this.y + s.strip / 2 - 2 * u, 12 * u, THEME.dim)
     if (this.hasMidi) this.drawMidi(g, u)
     // The keys, where they are now: across by `offset` while they slide, with those coming in from the side drawn too.
     const offset = this.offset
@@ -5966,9 +5968,12 @@ class Custom extends Control {
   /** A hand changed it: `pad.set(0.5)` is `pad.value = 0.5`, and also calls `onChange` and tells the target, as a dial does. */
   set(value) { this.v = value; this.changed(value) }
   scaleOf() { return 1 }
-  natural(u) {
-    const [dw, dh] = this.design || [0, 0]
-    return [(this.wide || dw || sized(this.size, 110, 150, 210)) * u, ((this.tall || dh || sized(this.size, 70, 100, 150)) + (this.label ? 22 : 0)) * u]
+  natural(u, room) {
+    const [dw, dh] = this.design || [0, 0], top = this.label ? 22 : 0
+    // A design with no height of its own keeps its shape: on a line too narrow for it, the control is as wide as the line and
+    // as tall as that makes it. With a height said, the box is the size said, and the design is scaled to fit it and centred.
+    if (this.design && !this.tall) { const w = Math.min((this.wide || dw) * u, room > 0 ? room : Infinity); return [w, w * dh / dw + top * u] }
+    return [(this.wide || dw || sized(this.size, 110, 150, 210)) * u, ((this.tall || dh || sized(this.size, 70, 100, 150)) + top) * u]
   }
   stretch() { return this.wide ? [1, 1] : this.design ? [0.4, 3] : [0.6, 3] }
   /** Where the contents go: the area under the label, and the scale and the offset that put a design in the middle of it. */
