@@ -332,3 +332,85 @@ def update(dt):
     w.wait("JSON.stringify(window.result) === '[[64],[64],[[\"on\",64,1],[\"off\",64]],[]]'")
     w.clean()
     w.page.close()
+
+
+PIXELS = """([i, fx, fy]) => {
+  const p = %s, c = p.items[i], g = p.layer.getContext('2d')
+  const at = (x, y) => [...g.getImageData(Math.round(x * p.ratio), Math.round(y * p.ratio), 1, 1).data]
+  return at(c.x + c.w * fx, c.y + c.h * fy)
+}""" % PANEL
+
+
+def test_what_a_control_of_your_own_draws_is_cut_at_its_edge_and_a_design_is_scaled_and_centred(browser, pyctures_run, tmp_path):
+    w = Watched(browser, pyctures_run(scene_file(tmp_path, """
+from pyctures import *
+from pydials import *
+
+def too_big(c):
+    c.rect(-500, -500, 1200, 1200, "#ff0000")
+    c.circle(c.width / 2, c.height / 2, 900, "#ff0000")
+
+def design_paint(c):
+    seen.append((c.width, c.height))
+    c.rect(0, 0, c.width, c.height, "#00ff00")
+
+seen = []
+custom("big", width=120, height=60, draw=too_big)
+custom("fit", width=300, height=100, design=(100, 100), draw=design_paint)
+
+def update(dt):
+    js.result = [list(seen[-1]) if seen else None]
+""")).url)
+    w.ready(2)
+    w.wait("window.result && window.result[0] !== null")
+    w.wait("%s.items[0].ops && %s.items[1].ops && %s.items[0].w > 0" % (PANEL, PANEL, PANEL))
+    w.page.wait_for_timeout(300)
+    # Inside the control it is red; a step outside it (in the plate around it) is not, however large the shape was.
+    assert w.page.evaluate(PIXELS, [0, 0.5, 0.7])[:3] == [255, 0, 0]
+    outside = w.page.evaluate("""(() => {
+      const p = %s, c = p.items[0], g = p.layer.getContext('2d'), u = c.u
+      const at = (x, y) => [...g.getImageData(Math.round(x * p.ratio), Math.round(y * p.ratio), 1, 1).data].slice(0, 3)
+      return [at(c.x - 3 * u, c.y + c.h / 2), at(c.x + c.w + 3 * u, c.y + c.h / 2), at(c.x + c.w / 2, c.y + c.h + 3 * u), at(c.x + c.w / 2, c.y + 12 * u)]
+    })()""" % PANEL)
+    assert all(px != [255, 0, 0] for px in outside), outside      # left, right, below, and the label line above its drawing
+    # A design is drawn at its own size whatever the control's, scaled to fit and centred: green in the middle, the plate at the sides.
+    assert w.page.evaluate("window.result[0]") == [100, 100]
+    assert w.page.evaluate(PIXELS, [1, 0.5, 0.5])[:3] == [0, 255, 0]
+    assert w.page.evaluate(PIXELS, [1, 0.05, 0.5])[:3] != [0, 255, 0] and w.page.evaluate(PIXELS, [1, 0.95, 0.5])[:3] != [0, 255, 0]
+    w.clean()
+    w.page.close()
+
+
+def test_the_page_gives_python_the_spectrum_of_a_wave_and_the_stock_spectrum_shows_it(browser, pyctures_run, tmp_path):
+    w = Watched(browser, pyctures_run(scene_file(tmp_path, """
+from pyctures import *
+from pydials import *
+
+# A source in the page that is a 1 kHz sine at full strength, as a synth's samples() and level() are.
+tone = js.Function(\"\"\"
+  const wave = new Float32Array(1024)
+  for (let i = 0; i < 1024; i++) wave[i] = Math.sin(2 * Math.PI * 1000 * i / 48000)
+  return { samples: () => wave, level: () => 0.5, notes: () => [69] }
+\"\"\")()
+got = {}
+
+def read(c):
+    s = c.spectrum
+    if s:
+        got["bands"], got["top"] = len(s), max(range(len(s)), key=lambda i: s[i])
+        got["wave"], got["notes"] = len(c.samples or []), c.input
+
+custom("mine", width=200, height=80, bands=32, source=tone, animate=True, draw=read)
+bars = spectrum("stock", tone, bands=32)
+
+def update(dt):
+    js.result = [got.get("bands"), got.get("top"), got.get("wave"), got.get("notes")]
+""")).url)
+    w.ready(2)
+    w.wait("window.result && window.result[0] === 32 && window.result[1] >= 16 && window.result[1] <= 18")   # 1 kHz is band 17 of 32
+    assert w.page.evaluate("window.result[2]") <= 128 and w.page.evaluate("window.result[3]") == [69]
+    # The stock control, which the page draws without Python: the highest bar is the same band, and nearly full.
+    w.wait("%s.items[1].kind === 'spectrum' && %s.items[1].bars[17] > 0.9" % (PANEL, PANEL))
+    assert w.page.evaluate("(() => { const b = %s.items[1].bars; let t = 0; for (let i = 1; i < b.length; i++) if (b[i] > b[t]) t = i; return t })()" % PANEL) in (16, 17, 18)
+    w.clean()
+    w.page.close()

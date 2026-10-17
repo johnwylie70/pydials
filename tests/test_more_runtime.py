@@ -387,3 +387,88 @@ def test_a_keyboard_asks_for_the_midi_button_only_when_it_is_told_to():
     assert r["error"] is None
     specs = [m[2] for m in made(r) if m[0] == "keyboard"]
     assert specs[0].get("midi") is True and "midi" not in specs[1]
+
+
+def test_a_spectrum_is_made_with_its_bands_peaks_and_rate_and_is_fed_a_wave_each_frame_when_python_gives_it_one():
+    r = start("""
+        from pydials import *
+        tone = spectrum("tone", bands=48, peaks=False, rate=44100)
+        def wave():
+            return [0.0, 0.5, -0.5, 0.25] * 40
+        pulled = spectrum(wave)
+        fixed = spectrum([0.1] * 200, width=300, size="large")
+    """)
+    assert r["error"] is None
+    assert made(r) == [("spectrum", 1, {"label": "tone", "bands": 48, "peaks": False, "rate": 44100}),
+                       ("spectrum", 2, {}), ("spectrum", 3, {"width": 300, "size": "large"})]
+    r = tick({"b": 1})
+    fed = {c[0]: c[2] for c in sent(r, "call") if c[1] == "feed"}
+    assert set(fed) == {2, 3} and len(fed[2]) > 0 and all(v in (0.0, 0.5, -0.5, 0.25) for v in fed[2])      # the control that is fed nothing is not sent anything
+    assert 1 not in fed
+
+
+def test_a_control_of_your_own_with_a_design_is_drawn_at_that_size_before_and_after_the_page_reports_its_size():
+    r = start("""
+        from pydials import *
+        seen = []
+        def paint(c):
+            seen.append((c.width, c.height))
+        custom("an", design=(640, 300), bands=48, rate=44100, draw=paint, animate=True)
+        def update(dt):
+            print(seen[-1], len(seen) > 0)
+    """)
+    assert r["error"] is None
+    assert made(r) == [("custom", 1, {"label": "an", "design": [640, 300], "bands": 48, "rate": 44100})]
+    assert out(tick({"b": 1})) == ["(640,", "300)", "True"]
+    # The page draws a design at the design's size, so what it reports is the design's: nothing changes.
+    r = tick({"c": [1, [EVENT, "size", 640.0, 300.0]], "b": 1})
+    assert out(r) == ["(640.0,", "300.0)", "True"]
+    assert out(tick({"b": 1})) == ["(640.0,", "300.0)", "True"]
+
+
+def test_c_spectrum_is_asked_of_the_page_only_when_the_drawing_reads_it_and_arrives_as_json_text_or_a_list():
+    r = start("""
+        from pydials import *
+        from synths import *
+        lead = make_synth("lead")
+        got = {}
+        def reads(c):
+            got["spectrum"], got["samples"], got["notes"] = c.spectrum, c.samples, c.input
+        def level_only(c):
+            got["level"] = c.level
+        wants = custom("wants", width=200, height=100, source=lead, draw=reads)
+        quiet = custom("quiet", width=200, height=100, source=lead, draw=level_only)
+        def update(dt):
+            print(got.get("spectrum"), got.get("samples"), got.get("notes"))
+    """)
+    assert r["error"] is None
+    asked = [(c[0], c[1]) for c in sent(r, "set") if c[1] in ("pyWants", "pySpectrum")]
+    assert asked == [(1, "pySpectrum"), (1, "pyWants")]                    # only the control that read them asks, and for what it read
+    # Nothing has arrived yet; then the page tells, as JSON text (what a list inside an event can be handed to Python as) ...
+    assert tick({"b": 1})["out"].strip() == "None None None"
+    r = tick({"c": [1, [EVENT, "spectrum", "[0.1, 0.9, 0.5]"], 1, [EVENT, "samples", "[0.25, -0.25]"], 1, [EVENT, "notes", "[60, 64]"]], "b": 1})
+    assert r["out"].strip() == "[0.1, 0.9, 0.5] [0.25, -0.25] [60, 64]"
+    # ... or as lists, from a page that was made before it was (an older copy of the library).
+    r = tick({"c": [1, [EVENT, "spectrum", [0.3, 0.4]], 1, [EVENT, "samples", [0.5]], 1, [EVENT, "notes", []]], "b": 1})
+    assert r["out"].strip() == "[0.3, 0.4] [0.5] []"
+
+
+def test_a_list_the_page_sends_as_json_text_is_read_and_one_that_is_already_a_list_is_left_as_it_is():
+    import pydials
+    assert pydials._listed("[1, 2.5, -3]") == [1, 2.5, -3]
+    assert pydials._listed("[]") == []
+    assert pydials._listed([1, 2]) == [1, 2]
+    assert pydials._listed(None) is None
+
+
+def test_the_ranged_controls_take_log_and_labels_as_a_dial_does():
+    r = start("""
+        from pydials import *
+        number("n", 20, 20000, 440, log=True, log_from=20, labels={0: "off"})
+        fader("f", 20, 20000, 440, log=True, log_from=20, labels={0: "off"})
+        range_slider("r", 20, 20000, [100, 1000], log=True, log_from=20, labels={0: "off"}, default=[100, 1000])
+        wheel("w", 20, 20000, 440, log=True, log_from=20, labels={0: "off"})
+    """)
+    assert r["error"] is None
+    for kind, _, spec in made(r):
+        assert spec["log"] is True and spec["logFrom"] == 20 and spec["labels"] == {"$d": {"0": "off"}}, kind

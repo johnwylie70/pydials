@@ -1286,13 +1286,15 @@ class Readout(Control):
 
 
 def number(label=None, a=None, b=None, c=None, *, min=None, max=None, value=None, step=None, unit=None, digits=None,
-           default=None, x=None, y=None, share=None, span=None, colour=None, color=None, on_change=None):
+           log=None, log_from=None, labels=None, default=None, x=None, y=None, size=None, share=None, span=None, colour=None,
+           color=None, on_change=None):
     """A number with − and + at its sides: number("lives", 0, 9, 3), or number("voices", lead, "voices").
 
     Tap − or + to step and hold one to keep stepping, drag up or down on the number, or tap it and type.
     It counts in ones unless step= says otherwise (a small range counts in tenths). `lives.value`, or `lives * 2`."""
-    return Number(label, a, b, c, _options(min=min, max=max, value=value, step=step, unit=unit, digits=digits, default=default,
-                                           x=x, y=y, share=share, span=span, colour=colour, color=color, on_change=on_change))
+    return Number(label, a, b, c, _options(min=min, max=max, value=value, step=step, unit=unit, digits=digits, log=log,
+                                           logFrom=log_from, labels=labels, default=default, x=x, y=y, size=size, share=share,
+                                           span=span, colour=colour, color=color, on_change=on_change))
 
 
 stepper = number
@@ -1631,21 +1633,23 @@ def busy(label="", source=None, *, value=None, size=None, x=None, y=None, share=
 
 
 def range_slider(label=None, a=None, b=None, c=None, *, min=None, max=None, value=None, step=None, unit=None, digits=None,
-                 vertical=None, x=None, y=None, size=None, share=None, span=None, colour=None, color=None, on_change=None):
+                 log=None, log_from=None, labels=None, default=None, vertical=None, x=None, y=None, size=None, share=None,
+                 span=None, colour=None, color=None, on_change=None):
     """A slider with a low and a high handle: `price = range_slider("price", 0, 100, [20, 80])`, then price.low and
     price.high. range_slider("loop", sample, "start", "end") is two settings of `sample`. on_change(low, high)."""
-    return RangeSlider(label, a, b, c, _options(min=min, max=max, value=value, step=step, unit=unit, digits=digits,
-                                                vertical=vertical, x=x, y=y, size=size, share=share, span=span,
-                                                colour=colour, color=color, on_change=on_change))
+    return RangeSlider(label, a, b, c, _options(min=min, max=max, value=value, step=step, unit=unit, digits=digits, log=log,
+                                                logFrom=log_from, labels=labels, default=default, vertical=vertical, x=x,
+                                                y=y, size=size, share=share, span=span, colour=colour, color=color,
+                                                on_change=on_change))
 
 
 def fader(label=None, a=None, b=None, c=None, *, min=None, max=None, value=None, step=None, unit=None, log=None,
-          digits=None, default=None, x=None, y=None, size=None, share=None, span=None, colour=None, color=None,
-          on_change=None):
+          log_from=None, labels=None, digits=None, default=None, x=None, y=None, size=None, share=None, span=None,
+          colour=None, color=None, on_change=None):
     """An upright slider with the look of a mixing desk's: fader("volume", lead, "volume") or fader("level", 0, 1, 0.7)."""
-    return Fader(label, a, b, c, _options(min=min, max=max, value=value, step=step, unit=unit, log=log, digits=digits,
-                                          default=default, x=x, y=y, size=size, share=share, span=span, colour=colour,
-                                          color=color, on_change=on_change))
+    return Fader(label, a, b, c, _options(min=min, max=max, value=value, step=step, unit=unit, log=log, logFrom=log_from,
+                                          labels=labels, digits=digits, default=default, x=x, y=y, size=size, share=share,
+                                          span=span, colour=colour, color=color, on_change=on_change))
 
 
 # ---------------------------------------------------------------- for games
@@ -1981,13 +1985,14 @@ def pads(label=None, names=None, target=None, *, notes=None, columns=None, size=
 
 
 def wheel(label=None, a=None, b=None, c=None, *, spring=None, min=None, max=None, value=None, step=None, unit=None,
-          digits=None, default=None, x=None, y=None, size=None, share=None, span=None, colour=None, color=None,
-          on_change=None):
+          log=None, log_from=None, labels=None, digits=None, default=None, x=None, y=None, size=None, share=None,
+          span=None, colour=None, color=None, on_change=None):
     """A wheel that is rolled, as at the left of a synth's keys: wheel("mod", lead, "mod"). spring=True lets it roll
     back to where it started when it is let go."""
-    return Wheel(label, a, b, c, _options(spring=spring, min=min, max=max, value=value, step=step, unit=unit, digits=digits,
-                                          default=default, x=x, y=y, size=size, share=share, span=span, colour=colour,
-                                          color=color, on_change=on_change))
+    return Wheel(label, a, b, c, _options(spring=spring, min=min, max=max, value=value, step=step, unit=unit, log=log,
+                                          logFrom=log_from, labels=labels, digits=digits, default=default, x=x, y=y,
+                                          size=size, share=share, span=span, colour=colour, color=color,
+                                          on_change=on_change))
 
 
 mod_wheel = wheel
