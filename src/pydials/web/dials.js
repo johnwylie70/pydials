@@ -5867,12 +5867,15 @@ class Custom extends Control {
   }
   keyDown(e) { return this.hear.key ? !!this.hear.key(e, this.painter(null, this.u, this.label ? 22 : 0)) : false }
   draw(g, u) {
+    const top = this.label ? 22 : 0
     g.save()
     g.beginPath(); g.rect(this.x, this.y, this.w, this.h); g.clip()
     g.translate(this.x, this.y)
     g.scale(u, u)
-    const top = this.label ? 22 : 0, c = this.painter(g, u, top)
+    const c = this.painter(g, u, top)
     if (this.label) words(g, this.label, this.w / u / 2, 12, 12, THEME.dim, 'center', '', this.w / u - 6)
+    // What is drawn is cut at the edge of its own area: the label line above it is not drawn over.
+    g.beginPath(); g.rect(0, top, this.w / u, this.h / u - top); g.clip()
     g.translate(0, top)
     if (this.drawer) this.drawer(c)
     if (this.ops) for (const [name, ...args] of this.ops) if (PAINT[name]) PAINT[name](c, ...args)
