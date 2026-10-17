@@ -800,6 +800,83 @@ const stillness = () => { try { return matchMedia('(prefers-reduced-motion: redu
 /** How hard the computer's keys play, 0 to 1. */
 const KEY_VELOCITY = 0.8
 
+
+/**
+ * A KEYBOARD'S OWN MIDI INPUT, for a keyboard made with `midi: true` whose target has none of its own (a synth that
+ * lives in Python, or no target at all and only `onNoteOn`). It listens to the browser's MIDI inputs, keeps the choice of
+ * device and channel, and plays what arrives through the keyboard itself (so the target's noteOn, onNoteOn and the lit
+ * keys all follow). It answers as `lead.midiInput()` does: get, set, describe, level and notes.
+ */
+class LocalMidi {
+  constructor(keyboard) {
+    this.keyboard = keyboard
+    this.access = null
+    this.known = []
+    this.device = 'all'
+    this.channel = 'all'
+    this.unavailable = typeof navigator === 'undefined' || typeof navigator.requestMIDIAccess !== 'function'
+    this.asked = false
+    this.hit = 0
+    this.at = 0
+    this.on = new Set()
+  }
+  /** The first time: ask the browser for its MIDI devices, which is when it asks the person. */
+  start() {
+    if (this.asked || this.unavailable) return
+    this.asked = true
+    navigator.requestMIDIAccess().then((access) => {
+      this.access = access
+      access.onstatechange = () => this.listen()
+      this.listen()
+    }).catch(() => { this.unavailable = true; this.keyboard.touch() })
+  }
+  listen() {
+    this.known = []
+    for (const input of this.access.inputs.values()) {
+      this.known.push(input.name || input.id)
+      input.onmidimessage = (e) => this.heard(input.name || input.id, e.data)
+    }
+    this.keyboard.touch()
+  }
+  heard(from, data) {
+    if (!data || data.length < 2) return
+    const kind = data[0] & 0xf0, channel = (data[0] & 0x0f) + 1
+    if (kind !== 0x90 && kind !== 0x80) return
+    if (this.device !== 'all' && this.device !== from) return
+    if (this.channel !== 'all' && Number(this.channel) !== channel) return
+    const note = data[1], velocity = data[2] / 127
+    if (kind === 0x90 && velocity > 0) {
+      if (this.on.has(note)) return
+      this.on.add(note)
+      this.hit = velocity
+      this.at = performance.now()
+      this.keyboard.press(note, velocity)
+    } else if (this.on.has(note)) {
+      this.on.delete(note)
+      this.keyboard.release(note)
+    }
+  }
+  describe(setting) {
+    if (setting === 'device') return { name: 'device', kind: 'text', choices: this.unavailable ? ['no MIDI here'] : this.known.length ? ['all', ...this.known] : ['no devices'], default: 'all' }
+    if (setting === 'channel') return { name: 'channel', kind: 'text', choices: ['all', ...Array.from({ length: 16 }, (_, i) => String(i + 1))], default: 'all' }
+    return undefined
+  }
+  get(setting) {
+    if (setting === 'device') return this.unavailable ? 'no MIDI here' : this.known.length ? this.device : 'no devices'
+    if (setting === 'channel') return String(this.channel)
+    return undefined
+  }
+  set(setting, value) {
+    if (setting === 'device') this.device = String(value)
+    else if (setting === 'channel') this.channel = String(value)
+    this.keyboard.touch()
+    return this
+  }
+  /** How hard the last key was hit, fading away in about a third of a second. */
+  level() { return Math.max(0, this.hit * (1 - (performance.now() - this.at) / 350)) }
+  notes() { return [...this.on] }
+}
+
 class Keyboard extends Control {
   constructor(panel, kind, spec) {
     super(panel, kind, spec)
@@ -831,7 +908,7 @@ class Keyboard extends Control {
   get port() {
     if (!this.midi || this.midiPort) return this.midiPort
     const ask = method(this.target, 'midiInput', 'midi_input')
-    return (this.midiPort = ask ? ask() : null)
+    return (this.midiPort = ask ? ask() : new LocalMidi(this))
   }
   /** Where the MIDI button is: on the strip, beside the left arrow. */
   midiBox(u) {
@@ -973,7 +1050,11 @@ class Keyboard extends Control {
   /** Open the MIDI panel. The first time, the synth is told to listen (which is when the browser asks for permission). */
   showMidi() {
     if (!this.hasMidi) return
-    if (!this.midiAsked) { this.midiAsked = true; const listen = method(this.target, 'playFromMidi', 'play_from_midi'); if (listen) { try { listen() } catch (e) { /* the panel says what is wrong */ } } }
+    if (!this.midiAsked) {
+      this.midiAsked = true
+      if (this.port instanceof LocalMidi) this.port.start()
+      else { const listen = method(this.target, 'playFromMidi', 'play_from_midi'); if (listen) { try { listen() } catch (e) { /* the panel says what is wrong */ } } }
+    }
     this.list = new MidiPopup(this).open()
   }
   up(p) {

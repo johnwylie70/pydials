@@ -263,7 +263,7 @@ piano = keyboard(lead, octave=4, midi=True)
 plain = keyboard(None, octave=3, midi=True)
 """)).url)
     w.ready(2)
-    w.wait("%s.items[0].hasMidi && !%s.items[1].hasMidi" % (PANEL, PANEL))    # a keyboard with no synth has no button
+    w.wait("%s.items[0].hasMidi && %s.items[1].hasMidi" % (PANEL, PANEL))     # a keyboard with no synth has the button too (it listens itself)
     button = "(() => { const k = %s.items[0], b = k.midiBox(k.u), r = document.querySelector('[data-pyctures-src] canvas').getBoundingClientRect(); return [r.left + b.x + b.w / 2, r.top + b.y + b.h / 2] })()" % PANEL
     x, y = w.page.evaluate(button)
     w.page.mouse.click(x, y)
@@ -282,5 +282,53 @@ plain = keyboard(None, octave=3, midi=True)
     w.wait("!%s.popup" % PANEL)
     w.page.evaluate("window.__level = 0.9")                        # a key struck: the button lights
     w.wait("%s.items[0].midiLit > 0" % PANEL)
+    w.clean()
+    w.page.close()
+
+
+FAKE_MIDI = """
+(() => {
+  const input = (id, name) => ({ id, name, manufacturer: '', type: 'input', state: 'connected', connection: 'open', onmidimessage: null,
+    addEventListener() {}, removeEventListener() {}, open: async () => {} })
+  const inputs = new Map([['a', input('a', 'Keystation 49')], ['b', input('b', 'Launchkey Mini')]])
+  window.__inputs = inputs
+  navigator.requestMIDIAccess = async () => ({ inputs, outputs: new Map(), sysexEnabled: false, onstatechange: null, addEventListener() {}, removeEventListener() {} })
+})()
+"""
+
+
+def test_a_keyboard_with_a_python_synth_or_only_on_note_on_listens_to_the_browsers_midi_and_python_hears_the_notes(browser, pyctures_run, tmp_path):
+    w = Watched(browser, pyctures_run(scene_file(tmp_path, """
+from pyctures import *
+from pydials import *
+
+class Synth:
+    # A synth that lives in Python: it has no page handle and no midiInput.
+    def __init__(self): self.on = []; self.off = []
+    def note_on(self, note, velocity=0.8): self.on.append(note)
+    def note_off(self, note): self.off.append(note)
+
+synth = Synth()
+heard = []
+piano = keyboard(synth, octave=4, midi=True, on_note_on=lambda note, velocity: heard.append(("on", note, round(velocity, 2))),
+                 on_note_off=lambda note: heard.append(("off", note)))
+bare = keyboard(None, octave=3, midi=True)
+
+def update(dt):
+    js.result = [synth.on, synth.off, heard, piano.notes]
+""")).url, init=FAKE_MIDI)
+    w.ready(2)
+    w.wait("%s.items[0].hasMidi && %s.items[1].hasMidi" % (PANEL, PANEL))           # the button is there for both
+    button = "(() => { const k = %s.items[0], b = k.midiBox(k.u), r = document.querySelector('[data-pyctures-src] canvas').getBoundingClientRect(); return [r.left + b.x + b.w / 2, r.top + b.y + b.h / 2] })()" % PANEL
+    x, y = w.page.evaluate(button)
+    w.page.mouse.click(x, y)                                                          # a tap connects: the browser's MIDI is asked for
+    w.wait("%s.popup && %s.popup.constructor.name === 'MidiPopup' && %s.popup.devices().length === 3" % (PANEL, PANEL, PANEL))
+    assert w.page.evaluate("%s.popup.devices()" % PANEL) == ["all", "Keystation 49", "Launchkey Mini"]
+    w.page.mouse.click(450, 20)                                                       # outside: the panel closes
+    w.wait("!%s.popup" % PANEL)
+    w.page.evaluate("window.__inputs.get('b').onmidimessage({ data: new Uint8Array([0x90, 64, 127]), timeStamp: performance.now() })")
+    w.wait("JSON.stringify(window.result) === '[[64],[],[[\"on\",64,1]],[64]]'")       # Python's synth, on_note_on and keyboard.notes all have it
+    w.page.evaluate("window.__inputs.get('b').onmidimessage({ data: new Uint8Array([0x80, 64, 0]), timeStamp: performance.now() })")
+    w.wait("JSON.stringify(window.result) === '[[64],[64],[[\"on\",64,1],[\"off\",64]],[]]'")
     w.clean()
     w.page.close()

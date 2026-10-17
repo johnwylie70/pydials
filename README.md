@@ -632,7 +632,9 @@ lead = make_synth("lead")
 keyboard(lead, octave=4, midi=True)
 ```
 
-MIDI works in Chrome, Edge and Firefox on a computer. Where there is none the panel says so. The button is there for a synth that lives in the page and can say which MIDI input it listens to (its `midiInput()`); a keyboard with another target, or none, has no button.
+MIDI works in Chrome, Edge and Firefox on a computer. Where there is none the panel says so.
+
+The button works with any keyboard. With a synth that lives in the page and has its own MIDI input, the panel chooses what the synth listens to. With any other target (a synth made in Python with `make_synth`, a Python object with `note_on` and `note_off`, or none at all and only `on_note_on=`), the keyboard listens to the browser's MIDI inputs itself: a key struck on the chosen device and channel plays through the keyboard, so `note_on` is called, `on_note_on` is called, `piano.notes` holds it and its key lights.
 
 ## Targets
 

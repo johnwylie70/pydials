@@ -944,7 +944,8 @@ def keyboard(target=None, *, octave=None, octaves=None, keys=None, hints=None, a
     when the octave changes; animate=False makes them jump.
 
     midi=True puts a MIDI button on the strip above the keys: a tap connects, and its panel chooses the device and
-    the channel the synth listens to. It is there for a synth (a target in the page) and left out for any other target."""
+    the channel. For a synth in the page it chooses what the synth listens to; with any other target (a Python synth, or
+    only on_note_on=) the keyboard listens to the browser's MIDI itself and plays through note_on, on_note_on and its keys."""
     return Keyboard(target, _options(octave=octave, octaves=octaves, keys=keys, hints=hints, animate=animate, x=x, y=y, width=width,
                                      height=height, share=share, span=span, colour=colour, color=color,
                                      on_note_on=on_note_on, on_note_off=on_note_off, midi=midi))

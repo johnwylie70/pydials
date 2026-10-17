@@ -3,7 +3,7 @@
 ## Unreleased
 
 - `custom()` makes a control of your own: you draw it (`draw=`, with a painter of rectangles, circles, lines, polygons and words in the control's own points), say what a finger does (`on_down=`, `on_move=`, `on_up=`), and let it listen to a synth (`source=`, giving `c.level`, `c.samples` and `c.input`) or keep time (`on_frame=`, `animate=True`). It lies in the layout like any other control. `examples/custom_instrument.py` is a ribbon, a ring that follows the sound and a row of steps.
-- `keyboard(lead, midi=True)` puts a MIDI button on the keyboard: a panel to choose the device and the channel the synth listens to, a light that flickers as notes arrive, and the keys a MIDI keyboard holds lit.
+- `keyboard(lead, midi=True)` puts a MIDI button on the keyboard: a panel to choose the device and the channel, a light that flickers as notes arrive, and the keys a MIDI keyboard holds lit. It works with a synth made in Python, a Python object with `note_on` and `note_off`, and a keyboard with only `on_note_on=`: the keyboard listens to the browser's MIDI itself and plays through them.
 - Fixed: a select or rotary did not follow a choice changed in code when its target reads the choice back by name (`lead.wave = "sine"`). It now takes a place in the list, a name in any case, or `false` and `true` for two choices, and says nothing back to the target.
 - The keyboard keeps its height: when everything does not fit, the scope is made shorter and then the plates are moved, under a scope and a keyboard that stay put. `keyboard(lead, height=200)` is kept to.
 - A dial turned by ratio may start at 0 (`{"min": 0, "log": True}` from a target's `describe`), and `labels={0: "auto"}` shows a name in place of a value.
