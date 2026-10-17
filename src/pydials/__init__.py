@@ -49,7 +49,7 @@ import sys
 
 __version__ = "0.0.0"
 
-__all__ = ["dial", "slider", "button", "toggle", "select", "rotary", "keyboard", "scope", "meter",
+__all__ = ["dial", "slider", "button", "toggle", "select", "rotary", "keyboard", "scope", "spectrum", "meter",
            "label", "group", "row", "column", "grid", "page", "spacer", "wrap", "layout", "room", "theme"]
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -749,6 +749,33 @@ class Scope(Control):
             self._call("feed", _short(values))
 
 
+class Spectrum(Control):
+    """The frequencies in a sound as bars, low to high from the left. It takes what a scope takes: a synth in the page, a function
+    that gives a list of numbers (a wave), or a list. The page works out the spectrum, so a synth in the page costs Python nothing."""
+    kind = "spectrum"
+
+    def __init__(self, source, spec):
+        page = _in_page(source)
+        self._pull = None
+        self._list = None
+        if page is not None:
+            spec["source"] = page
+        elif source is not None:
+            self._pull = source if callable(source) else _method(source, "samples", "scope")
+            if self._pull is None:
+                self._list = source
+            _beat()
+        self.value = None
+        Control.__init__(self, spec)
+
+    def _frame(self):
+        if self._pull is None and self._list is None:
+            return
+        values = self._pull() if self._pull else self._list
+        if values is not None and len(values):
+            self._call("feed", _short(values))
+
+
 class Meter(Control):
     """A level from 0 to 1 (or a left and a right) as a bar of lights."""
     kind = "meter"
@@ -965,6 +992,17 @@ def scope(label=None, source=None, *, points=None, min=None, max=None, steady=No
     label, source = _labelled(label, source)
     return Scope(source, _options(label=label, points=points, min=min, max=max, steady=steady, x=x, y=y, width=width,
                                   height=height, share=share, span=span, colour=colour, color=color))
+
+
+def spectrum(label=None, source=None, *, bands=None, peaks=None, rate=None, x=None, y=None, size=None, width=None, height=None,
+             share=None, span=None, colour=None, color=None):
+    """The frequencies in a sound as bars: spectrum(lead), or spectrum("label", lead, bands=48).
+
+    bands= is how many bars (32, from 30 Hz up, spaced as notes are); peaks=False leaves out the ticks that hold a moment
+    and fall; rate= is the sound card's rate (48000). Each bar is as loud as the sound is in its band, from -90 dB to 0 dB."""
+    label, source = _labelled(label, source)
+    return Spectrum(source, _options(label=label, bands=bands, peaks=peaks, rate=rate, x=x, y=y, size=size, width=width,
+                                     height=height, share=share, span=span, colour=colour, color=color))
 
 
 def meter(label=None, source=None, *, vertical=None, x=None, y=None, size=None, share=None, span=None, colour=None,
@@ -2482,6 +2520,7 @@ _HOOKS = """return (api, id, pointer) => {
       for (let i = 0; i < n; i += stride) out.push(Math.round(c.samples[i] * 1000) / 1000)
       tell('samples', out)
     }
+    if (item.pySpectrum) tell('spectrum', Array.from(c.spectrum, (v) => Math.round(v * 1000) / 1000))
     const notes = c.input ? [...c.input].join() : ''
     if (notes !== said) { said = notes; tell('notes', c.input ? [...c.input] : []) }
   }
@@ -2518,6 +2557,13 @@ class Painter:
     input = property(lambda self: self._control._input)
     level = property(lambda self: self._control._level)
     accent = property(lambda self: self._control._colour or self.theme["accent"])
+
+    @property
+    def spectrum(self):
+        # The page works out the spectrum (an FFT of all 1024 samples, in `bands` log-spaced bands from 30 Hz, each 0 to 1:
+        # -90 dB to 0 dB) and sends it a frame at a time, so it is only sent when it is wanted.
+        self._control._want_spectrum()
+        return self._control._spectrum
 
     @property
     def samples(self):
@@ -2592,12 +2638,15 @@ class Custom(Control):
         self._input = None
         self._level = 0.0
         self._samples = None
+        self._spectrum = None
         self._wants = False
+        self._wants_spectrum = False
         # Until the layout says how big it is: what the page gives a control of its kind that was told nothing.
         size = spec.get("size")
         scale = {"small": 0, "large": 2}.get(size, 1) if not isinstance(size, (int, float)) else 1
-        self._width = spec.get("width") or (110, 150, 210)[scale]
-        self._height = spec.get("height") or (70, 100, 150)[scale]
+        design = spec.get("design")
+        self._width = spec.get("width") or (design[0] if design else (110, 150, 210)[scale])
+        self._height = spec.get("height") or (design[1] if design else (70, 100, 150)[scale])
         self._painter = Painter(self)
         self._sent = None
         self._stale = True
@@ -2648,6 +2697,11 @@ class Custom(Control):
             self._wants = True
             self._set("pyWants", True)
 
+    def _want_spectrum(self):
+        if not self._wants_spectrum and self._watching:
+            self._wants_spectrum = True
+            self._set("pySpectrum", True)
+
     def _told(self, value):
         if isinstance(value, (list, tuple)) and value and value[0] == _EVENT:
             kind = value[1]
@@ -2666,6 +2720,9 @@ class Custom(Control):
                 self.redraw()
             elif kind == "samples":
                 self._samples = value[2]
+                self.redraw()
+            elif kind == "spectrum":
+                self._spectrum = value[2]
                 self.redraw()
             elif kind == "notes":
                 self._input = value[2]
@@ -2695,8 +2752,8 @@ def _page_hooks():
 
 
 def custom(label=None, *, width=None, height=None, value=None, draw=None, on_down=None, on_move=None, on_up=None,
-           on_frame=None, animate=None, source=None, x=None, y=None, share=None, span=None, size=None, colour=None,
-           color=None, on_change=None):
+           on_frame=None, animate=None, source=None, design=None, bands=None, rate=None, x=None, y=None, share=None, span=None,
+           size=None, colour=None, color=None, on_change=None):
     """A control of your own. You say how it looks and what a finger does to it; it sits in the layout like any other.
 
         def paint(c):
@@ -2715,9 +2772,15 @@ def custom(label=None, *, width=None, height=None, value=None, draw=None, on_dow
     the control's own points). on_frame(c) is called every frame. pad.value is whatever you keep, pad.set(v) is a hand
     changing it (it calls on_change(v) too), and `pad.held` says a finger is down.
 
-    source= is what it listens to: a synth in the page (then c.level, c.samples and c.input are filled for each
-    frame: a ring that grows with the sound, a line that is its wave), or a function whose answer is c.input.
+    source= is what it listens to: a synth in the page (then c.level, c.samples, c.spectrum and c.input are filled for
+    each frame: a ring that grows with the sound, a line that is its wave, bars that are its spectrum), or a function
+    whose answer is c.input. c.spectrum is the wave in `bands` (32) log-spaced bands from 30 Hz, each 0 to 1 (-90 dB to
+    0 dB); `rate` (48000) is the sound card's rate, for where the bands fall.
+
+    design=(width, height) says what size you draw for: c.width and c.height are then that, whatever the control's real
+    size, and what you draw is scaled to fit it and centred in it. Everything a control draws is cut at its own edge.
     A control that draws nothing of its own (no draw=) is blank."""
     return Custom(_options(label=label, width=width, height=height, value=value, draw=draw, on_down=on_down, on_move=on_move,
-                           on_up=on_up, on_frame=on_frame, animate=animate, source=source, x=x, y=y, share=share, span=span,
-                           size=size, colour=colour, color=color, on_change=on_change))
+                           on_up=on_up, on_frame=on_frame, animate=animate, source=source, design=list(design) if design else None,
+                           bands=bands, rate=rate, x=x, y=y, share=share, span=span, size=size, colour=colour, color=color,
+                           on_change=on_change))

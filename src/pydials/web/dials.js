@@ -1189,6 +1189,82 @@ class Keyboard extends Control {
 
 // --------------------------------------------------------------------------------------------
 /**
+ * A SPECTRUM: the frequencies in a sound as bars, low to high from the left, each band as loud as the sound is there (a
+ * full-strength sine reaches the top of its band; the scale is 0 to -90 dB), with peaks that hold a moment and fall. It
+ * takes what a scope takes: a synth (or anything with samples()), a function that returns a list of numbers, or a list.
+ */
+class Spectrum extends Control {
+  constructor(panel, kind, spec) {
+    super(panel, kind, spec)
+    const source = spec.source
+    this.pull = typeof source === 'function' ? source : method(source, 'samples', 'scope')
+    this.list = !this.pull && isList(source) ? source : null
+    this.bands = clamp(Math.round(spec.bands || 32), 4, 128)
+    this.rate = spec.rate || 48000
+    this.peaks = spec.peaks !== false
+    this.bars = new Float32Array(this.bands)
+    this.high = new Float32Array(this.bands)
+    this.held = new Float64Array(this.bands)
+    this.last = 0
+  }
+  get value() { return Array.from(this.bars) }
+  /** A whole new wave at once (what Python sends each frame). */
+  feed(list) { this.list = list }
+  scaleOf() { return 1 }
+  natural(u, room) {
+    const tall = ((this.tall || sized(this.size, 90, 130, 190)) + (this.label ? 18 : 0)) * u
+    return this.wide ? [this.wide * u, tall] : [Math.min(room, sized(this.size, 200, 280, 380) * u), tall]
+  }
+  stretch() { return this.wide ? [1, 1] : [0.5, Infinity] }
+  frame(now) {
+    const data = this.pull ? this.pull() : this.list
+    const dt = this.last ? Math.min(0.1, (now - this.last) / 1000) : 0
+    this.last = now
+    const next = data && data.length ? spectrumBands(data, this.bands, this.rate) : null
+    let moved = false
+    for (let i = 0; i < this.bands; i++) {
+      const was = this.bars[i], bar = Math.max(next ? next[i] : 0, was - 1.2 * dt)
+      if (Math.abs(bar - was) > 0.002) moved = true
+      this.bars[i] = bar
+      if (bar >= this.high[i]) { this.high[i] = bar; this.held[i] = now }
+      else if (now - this.held[i] > 700) { this.high[i] = Math.max(bar, this.high[i] - 0.5 * dt); moved = true }
+    }
+    if (moved) this.touch()
+  }
+  draw(g, u) {
+    const top = this.y + (this.label ? 20 : 4) * u, x = this.x + 4 * u, w = this.w - 8 * u, h = this.y + this.h - 4 * u - top
+    if (this.label) words(g, this.label, this.x + this.w / 2, this.y + 11 * u, 12 * u, THEME.dim, 'center', '', this.w - 6 * u)
+    rounded(g, x, top, w, h, 7 * u)
+    g.fillStyle = THEME.well
+    g.fill()
+    g.save()
+    g.clip()
+    const axis = 13 * u, bx = x + 6 * u, bw = w - 12 * u, by = top + 6 * u, bh = h - 12 * u - axis, n = this.bands
+    // Where -20, -40 and -60 dB fall, and where 100 Hz, 1 kHz and 10 kHz do.
+    g.strokeStyle = THEME.edge
+    g.lineWidth = 1
+    g.fillStyle = THEME.dim
+    for (const db of [-20, -40, -60]) {
+      const gy = Math.round(by + bh * (1 - (db + 90) / 90)) + 0.5
+      g.beginPath(); g.moveTo(bx, gy); g.lineTo(bx + bw, gy); g.stroke()
+      words(g, String(db), bx + bw - 1 * u, gy - 5 * u, 8.5 * u, THEME.dim, 'right')
+    }
+    const lo = 30, hi = Math.min(18000, this.rate * 0.475)
+    for (const [hz, name] of [[100, '100'], [1000, '1k'], [10000, '10k']]) {
+      if (hz > hi) continue
+      words(g, name, bx + bw * Math.log(hz / lo) / Math.log(hi / lo), by + bh + axis * 0.6, 9 * u, THEME.dim, 'center')
+    }
+    const each = bw / n, gap = Math.max(1, each * 0.2)
+    for (let i = 0; i < n; i++) {
+      const v = this.bars[i], tall = bh * v, left = bx + i * each + gap / 2
+      if (tall > 0.5) { g.fillStyle = v > 0.93 ? THEME.hot : v > 0.8 ? THEME.warn : this.accent; g.fillRect(left, by + bh - tall, each - gap, tall) }
+      if (this.peaks && this.high[i] > 0.02) { g.fillStyle = THEME.text; g.fillRect(left, by + bh * (1 - this.high[i]) - 1.5 * u, each - gap, 1.5 * u) }
+    }
+    g.restore()
+  }
+}
+
+/**
  * THE SCOPE draws a line of numbers: a sound's wave, or any value over time. It takes whatever
  * can give it numbers: a target with samples(), a function that returns a list, a list that
  * someone else keeps filling, or nothing at all, and then `wave.push(value)` adds one point.
@@ -1341,7 +1417,7 @@ class Meter extends Control {
   }
 }
 
-const KINDS = { dial: Dial, slider: Slider, button: Button, toggle: Toggle, select: Select, rotary: Rotary, label: Label, keyboard: Keyboard, scope: Scope, meter: Meter, spacer: Spacer }
+const KINDS = { dial: Dial, slider: Slider, button: Button, toggle: Toggle, select: Select, rotary: Rotary, label: Label, keyboard: Keyboard, scope: Scope, spectrum: Spectrum, meter: Meter, spacer: Spacer }
 
 // --------------------------------------------------------------------------------------------
 /**
@@ -1485,7 +1561,7 @@ const FLING_FADE = 320
 /** How far a finger on a slider goes, in points, before it is clear whether it means the slider or to move the plates. */
 const MEANT_AFTER = 8
 /** A finger on one of these moves the plates under it when there is more than fits: they take no hand themselves. */
-const SLIDES = new Set(['label', 'scope', 'meter'])
+const SLIDES = new Set(['label', 'scope', 'spectrum', 'meter'])
 
 /**
  * THE PANEL: every control on one canvas, their layout, the canvas they are drawn on and the
@@ -5821,6 +5897,45 @@ const PAINT = {
 }
 const PAINTER = Object.fromEntries(Object.entries(PAINT).map(([name, fn]) => [name, function (...args) { return fn(this, ...args) }]))
 
+/** The spectrum of a wave in `bands` log-spaced bands from 30 Hz up, each 0 to 1 (-90 dB to 0 dB, a full-scale sine is 1): a Hann window and an FFT of the last power-of-two samples. */
+function spectrumBands(x, bands, rate) {
+  let n = 1
+  while (n * 2 <= x.length) n *= 2
+  if (n < 64) return new Array(bands).fill(0)
+  const re = new Float32Array(n), im = new Float32Array(n)
+  let sum = 0
+  for (let i = 0; i < n; i++) { const w = 0.5 - 0.5 * Math.cos(TAU * i / (n - 1)); re[i] = x[x.length - n + i] * w; sum += w }
+  for (let i = 1, j = 0; i < n; i++) {                       // bit reversal
+    let bit = n >> 1
+    for (; j & bit; bit >>= 1) j ^= bit
+    j ^= bit
+    if (i < j) { const t = re[i]; re[i] = re[j]; re[j] = t }
+  }
+  for (let len = 2; len <= n; len <<= 1) {                   // the butterflies
+    const ang = -TAU / len, wr = Math.cos(ang), wi = Math.sin(ang)
+    for (let i = 0; i < n; i += len) {
+      let cr = 1, ci = 0
+      for (let k = 0; k < len / 2; k++) {
+        const a = i + k, b = a + len / 2, tr = re[b] * cr - im[b] * ci, ti = re[b] * ci + im[b] * cr
+        re[b] = re[a] - tr; im[b] = im[a] - ti; re[a] += tr; im[a] += ti
+        const nr = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = nr
+      }
+    }
+  }
+  const half = n / 2, db = new Float32Array(half)
+  for (let k = 0; k < half; k++) db[k] = 20 * Math.log10(Math.hypot(re[k], im[k]) * 2 / sum + 1e-9)
+  const lo = 30, hi = Math.min(18000, rate * 0.475), out = new Array(bands)
+  for (let b = 0; b < bands; b++) {
+    const k0 = lo * Math.pow(hi / lo, b / bands) * n / rate, k1 = lo * Math.pow(hi / lo, (b + 1) / bands) * n / rate
+    let v
+    if (k1 - k0 < 1) { const kc = (k0 + k1) / 2, a = Math.min(half - 1, Math.floor(kc)), t = kc - a; v = db[a] * (1 - t) + db[Math.min(half - 1, a + 1)] * t }
+    else { v = -Infinity; for (let k = Math.ceil(k0); k <= Math.min(half - 1, Math.floor(k1)); k++) v = Math.max(v, db[k]) }
+    out[b] = clamp((v + 90) / 90, 0, 1)
+  }
+  return out
+}
+Object.defineProperty(PAINTER, 'spectrum', { enumerable: true, get() { return this.control ? this.control.spectrumNow() : [] } })
+
 class Custom extends Control {
   constructor(panel, kind, spec) {
     super(panel, kind, spec)
@@ -5830,11 +5945,19 @@ class Custom extends Control {
     this.animate = !!spec.animate
     this.pull = typeof spec.source === 'function' ? spec.source : null
     this.watch = this.pull ? null : spec.source && typeof spec.source === 'object' ? spec.source : null
+    // `design: [width, height]`: draw as if the control were that size; it is scaled to fit its box and centred in it.
+    const d = spec.design
+    this.design = Array.isArray(d) && d[0] > 0 && d[1] > 0 ? [Number(d[0]), Number(d[1])] : null
+    this.bands = clamp(Math.round(spec.bands || 32), 4, 256)
+    this.rate = spec.rate || 48000
+    this.layer = null
     this.v = spec.value
     this.input = undefined
     this.samples = null
     this.level = 0
     this.fresh = true
+    this.spec = null
+    this.specOf = null
   }
   get value() { return this.v }
   set value(value) { this.v = value; this.touch() }
@@ -5843,14 +5966,30 @@ class Custom extends Control {
   /** A hand changed it: `pad.set(0.5)` is `pad.value = 0.5`, and also calls `onChange` and tells the target, as a dial does. */
   set(value) { this.v = value; this.changed(value) }
   scaleOf() { return 1 }
-  natural(u) { return [(this.wide || sized(this.size, 110, 150, 210)) * u, ((this.tall || sized(this.size, 70, 100, 150)) + (this.label ? 22 : 0)) * u] }
-  stretch() { return this.wide ? [1, 1] : [0.6, 3] }
-  /** The control's own points, and the painter its drawing is given. */
-  painter(g, u, top = 0) {
+  natural(u) {
+    const [dw, dh] = this.design || [0, 0]
+    return [(this.wide || dw || sized(this.size, 110, 150, 210)) * u, ((this.tall || dh || sized(this.size, 70, 100, 150)) + (this.label ? 22 : 0)) * u]
+  }
+  stretch() { return this.wide ? [1, 1] : this.design ? [0.4, 3] : [0.6, 3] }
+  /** Where the contents go: the area under the label, and the scale and the offset that put a design in the middle of it. */
+  fit(u) {
+    const top = this.label ? 22 * u : 0, area = { x: this.x, y: this.y + top, w: this.w, h: Math.max(0, this.h - top) }
+    if (!this.design) return { area, s: u, ox: 0, oy: 0, dw: area.w / u, dh: area.h / u }
+    const [dw, dh] = this.design, s = Math.min(area.w / dw, area.h / dh) || 0
+    return { area, s, ox: (area.w - dw * s) / 2, oy: (area.h - dh * s) / 2, dw, dh }
+  }
+  /** The painter its drawing is given: the shapes, and what the control knows. */
+  painter(g, f) {
     const c = Object.create(PAINTER)
-    c.g = g; c.width = this.w / u; c.height = this.h / u - top; c.u = u; c.value = this.v; c.held = this.held
+    c.g = g; c.control = this; c.width = f.dw; c.height = f.dh; c.u = f.s; c.value = this.v; c.held = this.held
     c.accent = this.accent; c.label = this.label; c.input = this.input; c.samples = this.samples; c.level = this.level; c.theme = THEME
     return c
+  }
+  /** The wave's spectrum in `bands` bands, worked out once for each wave that is read. */
+  spectrumNow() {
+    if (!this.samples || !this.samples.length) return new Array(this.bands).fill(0)
+    if (this.specOf !== this.samples) { this.specOf = this.samples; this.spec = spectrumBands(this.samples, this.bands, this.rate) }
+    return this.spec
   }
   frame(now) {
     if (this.pull) { const was = this.input; this.input = this.pull(); if (this.input !== was) this.touch() }
@@ -5860,36 +5999,44 @@ class Custom extends Control {
       if (level) { const l = level(); this.level = Array.isArray(l) ? Math.max(...l) : Number(l) || 0 }
       if (notes) this.input = notes()
     }
-    if (this.hear.frame) this.hear.frame(this.painter(null, this.u, this.label ? 22 : 0), now)
+    if (this.hear.frame) this.hear.frame(this.painter(null, this.fit(this.u)), now)
     if (this.animate || this.fresh) { this.fresh = false; this.touch() }
   }
   down(p) { this.send('down', p) }
   move(p) { this.send('move', p) }
   up(p) { this.send('up', p); this.touch() }
   send(what, p) {
-    const fn = this.hear[what], top = this.label ? 22 : 0
+    const fn = this.hear[what], f = this.fit(this.u)
     this.touch()
-    if (!fn) return
-    fn({ x: (p.x - this.x) / this.u, y: (p.y - this.y) / this.u - top, id: p.id, shift: !!p.shift }, this.painter(null, this.u, top))
+    if (!fn || !f.s) return
+    fn({ x: (p.x - f.area.x - f.ox) / f.s, y: (p.y - f.area.y - f.oy) / f.s, id: p.id, shift: !!p.shift }, this.painter(null, f))
   }
-  keyDown(e) { return this.hear.key ? !!this.hear.key(e, this.painter(null, this.u, this.label ? 22 : 0)) : false }
+  keyDown(e) { return this.hear.key ? !!this.hear.key(e, this.painter(null, this.fit(this.u))) : false }
   draw(g, u) {
     if (this.w < 2 || this.h < 2) return
-    const top = this.label ? 22 : 0
+    const top = this.label ? 22 * u : 0, f = this.fit(u)
     g.save()
     g.beginPath(); g.rect(this.x, this.y, this.w, this.h); g.clip()
-    g.translate(this.x, this.y)
-    g.scale(u, u)
+    if (this.label) words(g, this.label, this.x + this.w / 2, this.y + 12 * u, 12 * u, THEME.dim, 'center', '', this.w - 6 * u)
+    g.restore()
+    if (f.area.w < 2 || f.area.h < 2 || !f.s) return
+    // The contents are drawn on a layer of their own, the size of their area, and laid on the panel: whatever they draw,
+    // however large, can only be seen inside the area, and a design is scaled and centred on the layer.
+    const R = this.panel.ratio || 1, lw = Math.max(1, Math.round(f.area.w * R)), lh = Math.max(1, Math.round(f.area.h * R))
+    if (!this.layer) this.layer = document.createElement('canvas')
+    if (this.layer.width !== lw || this.layer.height !== lh) { this.layer.width = lw; this.layer.height = lh }
+    const lg = this.layer.getContext('2d')
+    lg.setTransform(1, 0, 0, 1, 0, 0)
+    lg.clearRect(0, 0, lw, lh)
+    lg.setTransform(R, 0, 0, R, 0, 0)
     try {
-      const c = this.painter(g, u, top)
-      if (this.label) words(g, this.label, this.w / u / 2, 12, 12, THEME.dim, 'center', '', this.w / u - 6)
-      // What is drawn is cut at the edge of its own area: the label line above it is not drawn over.
-      g.beginPath(); g.rect(0, top, this.w / u, this.h / u - top); g.clip()
-      g.translate(0, top)
+      lg.translate(f.ox, f.oy)
+      lg.scale(f.s, f.s)
+      const c = this.painter(lg, f)
       if (this.drawer) this.drawer(c)
       if (this.ops) for (const [name, ...args] of this.ops) if (PAINT[name]) PAINT[name](c, ...args)
     } finally {
-      g.restore()
+      g.drawImage(this.layer, f.area.x, f.area.y, f.area.w, f.area.h)
     }
   }
 }
@@ -6144,6 +6291,8 @@ function api(panel) {
     rotary: make('rotary', selected),
     scope: make('scope', sourced),
     meter: make('meter', sourced),
+    /** The frequencies in a sound as bars: spectrum(lead), spectrum("label", lead, { bands: 48 }), or spectrum(() => wave). Options: bands, peaks, rate. */
+    spectrum: make('spectrum', sourced),
     /** button("fire"), button("fire", onPress), button("fire", { onPress, onRelease }). */
     button: (label, a, b) => panel.add('button', typeof a === 'function' ? { ...b, label, onPress: a } : { ...a, label }),
     /** keyboard(target, { octave: 4 }), keyboard({ octave: 4 }) or keyboard(). */
@@ -6256,6 +6405,7 @@ const rotary = (...args) => dials().rotary(...args)
 const keyboard = (...args) => dials().keyboard(...args)
 const scope = (...args) => dials().scope(...args)
 const meter = (...args) => dials().meter(...args)
+const spectrum = (...args) => dials().spectrum(...args)
 const label = (...args) => dials().label(...args)
 const group = (...args) => dials().group(...args)
 const row = (...args) => dials().row(...args)
@@ -6298,7 +6448,7 @@ const modWheel = (...args) => dials().modWheel(...args)
 const pitchWheel = (...args) => dials().pitchWheel(...args)
 const custom = (...args) => dials().custom(...args)
 
-export { dials, dial, slider, button, toggle, select, rotary, keyboard, scope, meter, label, group, row, column, grid, page, spacer, wrap, layout, room, over, theme, version,
+export { dials, dial, slider, button, toggle, select, rotary, keyboard, scope, spectrum, meter, label, group, row, column, grid, page, spacer, wrap, layout, room, over, theme, version,
   number, stepper, textBox, readout, checkbox, choose, radio, dropdown, xyPad, colourPicker, colorPicker, progress, light, busy, rangeSlider, fader,
   joystick, dpad, actionButton, envelope, stepGrid, pads, wheel, modWheel, pitchWheel,
   steps, tranceGate, arpPattern, drumSeq, custom }
